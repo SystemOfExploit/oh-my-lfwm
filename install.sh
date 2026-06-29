@@ -19,70 +19,44 @@ need_root() {
 
 install_deps() {
     if command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf wayland wlroots0.20 libxkbcommon libinput libdrm mesa pixman systemd-libs kitty firefox pavucontrol thunar swaybg
+        pacman -S --needed --noconfirm base-devel pkgconf libx11 xorg-xsetroot xterm
     elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        apt-get install -y build-essential pkg-config libwayland-dev libwlroots-dev libxkbcommon-dev libinput-dev libdrm-dev libgbm-dev libpixman-1-dev libudev-dev kitty firefox-esr pavucontrol thunar swaybg
+        apt-get install -y build-essential pkg-config libx11-dev x11-xserver-utils xterm
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y gcc make pkgconf-pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel mesa-libgbm-devel pixman-devel systemd-devel kitty firefox pavucontrol thunar swaybg
+        dnf install -y gcc make pkgconf-pkg-config libX11-devel xsetroot xterm
     elif command -v zypper >/dev/null 2>&1; then
-        zypper install -y gcc make pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel Mesa-libgbm-devel pixman-devel systemd-devel kitty firefox pavucontrol thunar swaybg
+        zypper install -y gcc make pkg-config libX11-devel xsetroot xterm
     elif command -v apk >/dev/null 2>&1; then
-        apk add build-base pkgconf wayland-dev wlroots-dev xkbcommon-dev libinput-dev libdrm-dev mesa-dev pixman-dev eudev-dev linux-headers kitty firefox pavucontrol thunar swaybg
+        apk add build-base pkgconf libx11-dev xsetroot xterm
     elif command -v xbps-install >/dev/null 2>&1; then
-        xbps-install -Sy gcc make pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel MesaLib-devel pixman-devel eudev-libudev-devel
+        xbps-install -Sy gcc make pkg-config libX11-devel xsetroot xterm
     elif command -v emerge >/dev/null 2>&1; then
-        emerge --ask=n dev-build/pkgconf dev-libs/wayland gui-libs/wlroots x11-libs/libxkbcommon dev-libs/libinput x11-libs/libdrm media-libs/mesa x11-libs/pixman
+        emerge --ask=n dev-build/pkgconf x11-libs/libX11 x11-apps/xsetroot x11-terms/xterm
     else
-        warn "Unknown package manager. Install wlroots0.20, wayland, xkbcommon, gcc, make and pkgconf manually."
+        warn "Unknown package manager. Install gcc, make, pkg-config, libX11 development headers and xsetroot manually."
     fi
-}
-
-find_wlroots_pkg() {
-    if pkg-config --exists wlroots-0.20 2>/dev/null; then
-        printf '%s\n' wlroots-0.20
-        return 0
-    fi
-    if pkg-config --exists wlroots0.20 2>/dev/null; then
-        printf '%s\n' wlroots0.20
-        return 0
-    fi
-}
-
-check_pkg() {
-    pkg-config --exists "$1" 2>/dev/null || fail "pkg-config module not found: $1"
 }
 
 check_deps() {
     command -v make >/dev/null 2>&1 || fail "command not found: make"
     command -v pkg-config >/dev/null 2>&1 || fail "command not found: pkg-config/pkgconf"
-    command -v "${CC:-cc}" >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || fail "C compiler not found: install base-devel"
-
-    wlroots_pkg="$(find_wlroots_pkg)"
-    if [ -z "$wlroots_pkg" ]; then
-        pkg-config --list-all 2>/dev/null | grep -i wlroots || true
-        fail "wlroots0.20 installed, but pkg-config module wlroots-0.20 was not found"
-    fi
-
-    check_pkg "$wlroots_pkg"
-    check_pkg wayland-server
-    check_pkg xkbcommon
-    export WLROOTS_PKG="$wlroots_pkg"
-    info "Using wlroots pkg-config module: $WLROOTS_PKG"
+    command -v "${CC:-cc}" >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || fail "C compiler not found"
+    pkg-config --exists x11 || fail "pkg-config module not found: x11"
 }
 
 main() {
     need_root
     cd "$(dirname "$0")"
-    info "Installing dependencies for supported distributions"
+    info "Installing X11 build dependencies"
     install_deps
     check_deps
     info "Building $name"
     make clean
-    make WLROOTS_PKG="$WLROOTS_PKG"
+    make
     info "Installing $name to $prefix"
-    make PREFIX="$prefix" WLROOTS_PKG="$WLROOTS_PKG" install
-    info "Installed /usr/share/wayland-sessions/lfwm.desktop"
+    make PREFIX="$prefix" install
+    info "Installed /usr/share/xsessions/lfwm.desktop"
     info "System config installed to /etc/lfwm; user config can live in ~/.config/lfwm"
 }
 

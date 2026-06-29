@@ -42,6 +42,5 @@ for app_id, action in {
 }.items():
     print(f"rule {app_id} {action}")
 
-print("exec swaybg -i /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png -m fill")
-print("exec waybar")
+print("exec xsetroot -solid '#1d2021'")
 print("exec dunst")

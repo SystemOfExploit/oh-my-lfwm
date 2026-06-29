@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=lfwm
-Comment=Lightweight Fast Wayland Manager
+Comment=Lightweight Fast X11 Window Manager
 Exec=@BINDIR@/lfwm
 Type=Application
 DesktopNames=lfwm
-Keywords=wayland;compositor;windowmanager;
+Keywords=x11;windowmanager;

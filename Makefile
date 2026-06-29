@@ -7,16 +7,15 @@ NAME := lfwm
 PREFIX ?= /usr/local
 BINDIR := $(PREFIX)/bin
 SYSCONFDIR ?= /etc
-SESSION_DIR ?= /usr/share/wayland-sessions
+SESSION_DIR ?= /usr/share/xsessions
 CONFIG_DIR := $(SYSCONFDIR)/lfwm
 SHARE_DIR ?= /usr/share/lfwm
 WALLPAPER_SRC := wallpaper/gruvbox_wallpaper.png
 
-WLROOTS_PKG ?= wlroots-0.20
-PKGS := $(WLROOTS_PKG) wayland-server xkbcommon
+PKGS := x11
 
 CFLAGS ?= -O2 -pipe
-CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\" -DWLR_USE_UNSTABLE
+CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\"
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS) 2>/dev/null)
 LDFLAGS += -Wl,--as-needed
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)
@@ -30,8 +29,7 @@ OBJ := $(SRC:.c=.o)
 all: check-deps $(NAME)
 
 check-deps:
-	@test -n "$(WLROOTS_PKG)" || { echo "wlroots-0.20 pkg-config file not found. On Arch run: sudo pacman -S --needed wlroots0.20 pkgconf"; exit 1; }
-	@$(PKG_CONFIG) --exists $(PKGS) || { echo "Missing pkg-config dependencies: $(PKGS)"; exit 1; }
+	@$(PKG_CONFIG) --exists $(PKGS) || { echo "Missing pkg-config dependencies: $(PKGS). Install libX11 development headers."; exit 1; }
 
 $(NAME): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)

@@ -1,8 +1,9 @@
-﻿#pragma once
+#pragma once
+
 #include <stdbool.h>
 #include <stdint.h>
-#include <xkbcommon/xkbcommon.h>
-#include <wlr/types/wlr_keyboard.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
 
 enum lfwm_layout {
     LFW_LAYOUT_MASTER_STACK,
@@ -58,8 +59,8 @@ enum lfwm_action {
 };
 
 struct lfwm_binding {
-    uint32_t mods;
-    xkb_keysym_t sym;
+    unsigned int mods;
+    KeySym sym;
     enum lfwm_action action;
     int arg;
     char *spawn_cmd;
@@ -81,26 +82,23 @@ struct lfwm_rule {
     int master_count;
 };
 
-struct lfwm_var {
-    char *name;
-    char *value;
-    struct lfwm_var *next;
-};
-
 struct lfwm_mod_map {
     const char *name;
-    uint32_t mod;
+    unsigned int mod;
 };
 
 static const struct lfwm_mod_map mod_map[] = {
-    {"SUPER",  WLR_MODIFIER_LOGO},
-    {"MOD",    WLR_MODIFIER_LOGO},
-    {"SHIFT",  WLR_MODIFIER_SHIFT},
-    {"CTRL",   WLR_MODIFIER_CTRL},
-    {"ALT",    WLR_MODIFIER_ALT},
-    {"CAPS",   WLR_MODIFIER_CAPS},
-    {"MOD2",   WLR_MODIFIER_MOD2},
-    {"MOD3",   WLR_MODIFIER_MOD3},
-    {"MOD5",   WLR_MODIFIER_MOD5},
+    {"SUPER",  Mod4Mask},
+    {"MOD",    Mod4Mask},
+    {"LOGO",   Mod4Mask},
+    {"WIN",    Mod4Mask},
+    {"SHIFT",  ShiftMask},
+    {"CTRL",   ControlMask},
+    {"CONTROL",ControlMask},
+    {"ALT",    Mod1Mask},
+    {"MOD1",   Mod1Mask},
+    {"MOD2",   Mod2Mask},
+    {"MOD3",   Mod3Mask},
+    {"MOD5",   Mod5Mask},
     {NULL, 0},
 };
