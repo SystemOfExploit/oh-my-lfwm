@@ -2,12 +2,14 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
@@ -35,6 +37,8 @@ struct lfwm_view {
     bool maximized;
     int ignore_unmap;
     int x, y, w, h;
+    int cx, cy, cw, ch;
+    bool configured;
     int sv_x, sv_y, sv_w, sv_h;
 };
 
@@ -79,6 +83,8 @@ struct lfwm_server {
     bool ffm;
     bool sb;
     bool sg;
+    time_t config_mtime;
+    time_t last_config_check;
 
     Atom wm_protocols;
     Atom wm_delete_window;
@@ -191,6 +197,17 @@ static void list_insert_tail(struct lfwm_workspace *ws, struct lfwm_view *v) {
     ws->tail = v;
 }
 
+static void list_insert_after(struct lfwm_workspace *ws, struct lfwm_view *pos, struct lfwm_view *v) {
+    if (!pos) {
+        list_insert_tail(ws, v);
+        return;
+    }
+    v->prev = pos;
+    v->next = pos->next;
+    if (pos->next) pos->next->prev = v; else ws->tail = v;
+    pos->next = v;
+}
+
 static struct lfwm_view *find_view(struct lfwm_server *s, Window win) {
     for (int i = 0; i < 10; i++) {
         for (struct lfwm_view *v = s->workspaces[i].head; v; v = v->next)
@@ -219,6 +236,19 @@ static char *get_window_title(struct lfwm_server *s, Window win) {
     char *title = get_text_prop(s, win, s->net_wm_name);
     if (!title) title = get_text_prop(s, win, XA_WM_NAME);
     return title;
+}
+
+static time_t config_file_mtime(void) {
+    const char *home = getenv("HOME");
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    char path[1024];
+    struct stat st;
+
+    if (xdg) snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
+    else snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
+    if (stat(path, &st) == 0) return st.st_mtime;
+    if (stat("/etc/lfwm/lfwm.conf", &st) == 0) return st.st_mtime;
+    return 0;
 }
 
 static char *get_window_class(struct lfwm_server *s, Window win) {
@@ -512,6 +542,7 @@ static void reload_config(struct lfwm_server *s) {
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     apply_workspace_defaults(s);
+    s->config_mtime = config_file_mtime();
     grab_keys(s);
     for (int i = 0; i < 10; i++)
         for (struct lfwm_view *v = s->workspaces[i].head; v; v = v->next)
@@ -645,7 +676,16 @@ static void manage_window(struct lfwm_server *s, Window win) {
     v->h = wa.height > 1 ? wa.height : 600;
     v->fullscreen = get_wm_state_fullscreen(s, win);
 
-    list_insert_tail(ws, v);
+    Window rr, cr;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    struct lfwm_view *anchor = ws->focused;
+    if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask)) {
+        struct lfwm_view *hovered = va(s, rx, ry);
+        if (hovered && hovered->ws == ws)
+            anchor = hovered;
+    }
+    list_insert_after(ws, anchor, v);
     XSelectInput(s->dpy, win, EnterWindowMask | FocusChangeMask |
                  PropertyChangeMask | StructureNotifyMask);
     grab_buttons_for_window(s, win);
@@ -862,6 +902,7 @@ static void init_server(struct lfwm_server *s) {
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     apply_workspace_defaults(s);
+    s->config_mtime = config_file_mtime();
 
     setup_root_appearance(s);
 
@@ -882,6 +923,21 @@ static void init_server(struct lfwm_server *s) {
     scan_existing_windows(s);
     for (int i = 0; i < s->ac; i++) spawn_cmd(s->autostart_cmds[i]);
     fprintf(stderr, "lfwm: started on DISPLAY=%s\n", DisplayString(s->dpy));
+}
+
+static void maybe_reload_config(struct lfwm_server *s) {
+    time_t now = time(NULL);
+    if (now == s->last_config_check)
+        return;
+    s->last_config_check = now;
+
+    time_t mtime = config_file_mtime();
+    if (mtime && s->config_mtime && mtime != s->config_mtime) {
+        fprintf(stderr, "lfwm: config changed, reloading\n");
+        reload_config(s);
+    } else if (!s->config_mtime) {
+        s->config_mtime = mtime;
+    }
 }
 
 static void handle_event(struct lfwm_server *s, XEvent *ev) {
@@ -943,6 +999,7 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
     default:
         break;
     }
+    maybe_reload_config(s);
 }
 
 static void cleanup(struct lfwm_server *s) {

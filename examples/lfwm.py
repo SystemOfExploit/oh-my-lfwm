@@ -10,11 +10,12 @@ print("set smart_gaps true")
 print("set modifier SUPER")
 print("set drag_modifier SUPER")
 print("set master_position left")
-print("set default_layout MASTER_STACK")
+print("set default_layout dwindle")
+print("set focus_follows_mouse true")
 print("set master_ratio 0.50")
 print("set master_count 1")
 
-for ws, layout in {1: "master_stack", 2: "grid", 3: "master_stack", 4: "horiz"}.items():
+for ws, layout in {1: "dwindle", 2: "grid", 3: "dwindle", 4: "horiz"}.items():
     print(f"ws {ws} layout {layout}")
 
 for key, cmd in {"t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():

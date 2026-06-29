@@ -4,13 +4,13 @@ static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
 static unsigned long def_ba         = 0x5292e2;
 static unsigned long def_bi         = 0x3a3a47;
-static enum lfwm_layout def_layout  = LFW_LAYOUT_MASTER_STACK;
+static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
 static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
 static int   def_mp                 = 0;
 static unsigned int def_mod         = Mod4Mask;
 static unsigned int def_drag        = Mod4Mask;
-static bool  def_ffm                = false;
+static bool  def_ffm                = true;
 static bool  def_sb                 = true;
 static bool  def_sg                 = true;
 
