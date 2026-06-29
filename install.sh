@@ -19,16 +19,16 @@ need_root() {
 
 install_deps() {
     if command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf wayland wlroots0.20 libxkbcommon libinput libdrm mesa pixman systemd-libs
+        pacman -S --needed --noconfirm base-devel pkgconf wayland wlroots0.20 libxkbcommon libinput libdrm mesa pixman systemd-libs kitty firefox pavucontrol thunar swaybg
     elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        apt-get install -y build-essential pkg-config libwayland-dev libwlroots-dev libxkbcommon-dev libinput-dev libdrm-dev libgbm-dev libpixman-1-dev libudev-dev
+        apt-get install -y build-essential pkg-config libwayland-dev libwlroots-dev libxkbcommon-dev libinput-dev libdrm-dev libgbm-dev libpixman-1-dev libudev-dev kitty firefox-esr pavucontrol thunar swaybg
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y gcc make pkgconf-pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel mesa-libgbm-devel pixman-devel systemd-devel
+        dnf install -y gcc make pkgconf-pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel mesa-libgbm-devel pixman-devel systemd-devel kitty firefox pavucontrol thunar swaybg
     elif command -v zypper >/dev/null 2>&1; then
-        zypper install -y gcc make pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel Mesa-libgbm-devel pixman-devel systemd-devel
+        zypper install -y gcc make pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel Mesa-libgbm-devel pixman-devel systemd-devel kitty firefox pavucontrol thunar swaybg
     elif command -v apk >/dev/null 2>&1; then
-        apk add build-base pkgconf wayland-dev wlroots-dev xkbcommon-dev libinput-dev libdrm-dev mesa-dev pixman-dev eudev-dev linux-headers
+        apk add build-base pkgconf wayland-dev wlroots-dev xkbcommon-dev libinput-dev libdrm-dev mesa-dev pixman-dev eudev-dev linux-headers kitty firefox pavucontrol thunar swaybg
     elif command -v xbps-install >/dev/null 2>&1; then
         xbps-install -Sy gcc make pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel MesaLib-devel pixman-devel eudev-libudev-devel
     elif command -v emerge >/dev/null 2>&1; then

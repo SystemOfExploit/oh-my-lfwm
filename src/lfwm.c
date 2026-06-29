@@ -311,6 +311,8 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
         ws->layout = b->arg >= 0 && b->arg < LFW_LAYOUT_COUNT ? (enum lfwm_layout)b->arg : LFW_LAYOUT_MASTER_STACK;
         aw(s); break;
     case LFW_WS_SWITCH:       wss(s, b->arg); break;
+    case LFW_WS_NEXT:         wss(s, (s->current_ws + 1) % 10); break;
+    case LFW_WS_PREV:         wss(s, (s->current_ws + 9) % 10); break;
     case LFW_WS_MOVE:         if (ws->focused) wmv(s, ws->focused, b->arg, false); break;
     case LFW_WS_MOVE_AND_SWITCH: if (ws->focused) wmv(s, ws->focused, b->arg, true); break;
     case LFW_MOVE_LEFT:

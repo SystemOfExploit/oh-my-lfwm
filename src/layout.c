@@ -1,7 +1,9 @@
 static bool gos(struct lfwm_server *s, int *w, int *h) {
     if (wl_list_empty(&s->outputs)) return false;
-    struct lfwm_output *o = wl_container_of(s->outputs.next, o, link);
-    *w = o->wlr_output->width; *h = o->wlr_output->height;
+    struct wlr_box box;
+    wlr_output_layout_get_box(s->output_layout, NULL, &box);
+    *w = box.width;
+    *h = box.height;
     return (*w > 0 && *h > 0);
 }
 

@@ -1,4 +1,4 @@
-﻿static int   def_bw_active          = 3;
+static int   def_bw_active          = 3;
 static int   def_bw_inactive         = 2;
 static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
@@ -98,6 +98,8 @@ static enum lfwm_action pa(const char *s) {
         {"master_inc",LFW_MASTER_COUNT_INC},{"master_dec",LFW_MASTER_COUNT_DEC},
         {"layout_next",LFW_LAYOUT_NEXT},
         {"workspace",LFW_WS_SWITCH},{"ws",LFW_WS_SWITCH},
+        {"workspace_next",LFW_WS_NEXT},{"ws_next",LFW_WS_NEXT},
+        {"workspace_prev",LFW_WS_PREV},{"ws_prev",LFW_WS_PREV},
         {"movetows",LFW_WS_MOVE_AND_SWITCH},{"movews",LFW_WS_MOVE_AND_SWITCH},
         {"move_left",LFW_MOVE_LEFT},{"move_right",LFW_MOVE_RIGHT},
         {"move_up",LFW_MOVE_UP},{"move_down",LFW_MOVE_DOWN},
@@ -269,19 +271,14 @@ static void lc(struct lfwm_server *s) {
     }
     if (!f) {
         wlr_log(WLR_INFO, "no config at %s, using defaults", path);
-        ba(s, def_mod, XKB_KEY_Return, LFW_SPAWN, 0, "foot");
-        ba(s, def_mod, XKB_KEY_d, LFW_SPAWN, 0, "bemenu-run");
-        ba(s, def_mod, XKB_KEY_j, LFW_FOCUS_NEXT, 0, NULL);
-        ba(s, def_mod, XKB_KEY_k, LFW_FOCUS_PREV, 0, NULL);
-        ba(s, def_mod, XKB_KEY_h, LFW_RATIO_DEC, 5, NULL);
-        ba(s, def_mod, XKB_KEY_l, LFW_RATIO_INC, 5, NULL);
-        ba(s, def_mod, XKB_KEY_f, LFW_FOCUS_MASTER, 0, NULL);
+        ba(s, def_mod, XKB_KEY_t, LFW_SPAWN, 0, "kitty");
+        ba(s, def_mod, XKB_KEY_b, LFW_SPAWN, 0, "firefox");
+        ba(s, def_mod, XKB_KEY_v, LFW_SPAWN, 0, "pavucontrol");
+        ba(s, def_mod, XKB_KEY_e, LFW_SPAWN, 0, "thunar");
         ba(s, def_mod, XKB_KEY_q, LFW_CLOSE, 0, NULL);
-        ba(s, def_mod, XKB_KEY_F11, LFW_TOGGLE_FULLSCREEN, 0, NULL);
-        ba(s, def_mod, XKB_KEY_s, LFW_TOGGLE_FLOAT, 0, NULL);
+        ba(s, def_mod, XKB_KEY_Right, LFW_WS_NEXT, 0, NULL);
+        ba(s, def_mod, XKB_KEY_Left, LFW_WS_PREV, 0, NULL);
         ba(s, def_mod, XKB_KEY_space, LFW_LAYOUT_NEXT, 0, NULL);
-        ba(s, def_mod, XKB_KEY_Tab, LFW_LAYOUT_NEXT, 0, NULL);
-        ba(s, def_mod | WLR_MODIFIER_SHIFT, XKB_KEY_space, LFW_TOGGLE_FLOAT, 0, NULL);
         ba(s, def_mod, XKB_KEY_Escape, LFW_QUIT, 0, NULL);
         ba(s, def_mod, XKB_KEY_r, LFW_RELOAD, 0, NULL);
         ba(s, def_mod | WLR_MODIFIER_SHIFT, XKB_KEY_h, LFW_RESIZE_DEC, 20, NULL);
@@ -295,7 +292,7 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod, k, LFW_WS_SWITCH, i, NULL);
             ba(s, def_mod | WLR_MODIFIER_SHIFT, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
-        aa(s, "foot");
+        aa(s, "swaybg -i /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png -m fill");
         return;
     }
     char line[4096];

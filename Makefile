@@ -9,6 +9,8 @@ BINDIR := $(PREFIX)/bin
 SYSCONFDIR ?= /etc
 SESSION_DIR ?= /usr/share/wayland-sessions
 CONFIG_DIR := $(SYSCONFDIR)/lfwm
+SHARE_DIR ?= /usr/share/lfwm
+WALLPAPER_SRC := wallpaper/gruvbox_wallpaper.png
 
 WLROOTS_PKG ?= wlroots-0.20
 PKGS := $(WLROOTS_PKG) wayland-server xkbcommon
@@ -45,12 +47,15 @@ install: all
 	chmod 644 $(DESTDIR)$(SESSION_DIR)/lfwm.desktop
 	install -d $(DESTDIR)$(CONFIG_DIR)
 	install -m 644 examples/lfwm.conf $(DESTDIR)$(CONFIG_DIR)/lfwm.conf
+	install -d $(DESTDIR)$(SHARE_DIR)/wallpapers
+	install -m 644 $(WALLPAPER_SRC) $(DESTDIR)$(SHARE_DIR)/wallpapers/gruvbox_wallpaper.png
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(NAME)
 	rm -f $(DESTDIR)$(SESSION_DIR)/lfwm.desktop
 	rm -f $(DESTDIR)$(CONFIG_DIR)/lfwm.conf
 	rm -f $(DESTDIR)$(CONFIG_DIR)/lfwm.py
+	rm -f $(DESTDIR)$(SHARE_DIR)/wallpapers/gruvbox_wallpaper.png
 
 clean:
 	rm -f $(OBJ) $(NAME)

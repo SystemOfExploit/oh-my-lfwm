@@ -17,33 +17,31 @@ print("set master_count 1")
 for ws, layout in {1: "monocle", 2: "grid", 3: "master_stack", 4: "horiz"}.items():
     print(f"ws {ws} layout {layout}")
 
-for key, cmd in {"Return": "foot", "d": "bemenu-run", "f": "firefox", "c": "code"}.items():
+for key, cmd in {"t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
     print(f"bind SUPER {key} exec {cmd}")
 
 for line in [
-    "bind SUPER j focus_next",
-    "bind SUPER k focus_prev",
-    "bind SUPER h ratio_dec 5",
-    "bind SUPER l ratio_inc 5",
     "bind SUPER q close",
-    "bind SUPER s toggle_float",
-    "bind SUPER space layout_next",
+    "bind SUPER Right workspace_next",
+    "bind SUPER Left workspace_prev",
+    "bind SUPER Space layout_next",
     "bind SUPER r reload",
     "bind SUPER Escape quit",
 ]:
     print(line)
 
 for i in range(1, 11):
-    print(f"bind SUPER {i} workspace {i}")
-    print(f"bind SUPER+SHIFT {i} movetows {i}")
+    key = "0" if i == 10 else str(i)
+    print(f"bind SUPER {key} workspace {i}")
+    print(f"bind SUPER+SHIFT {key} movetows {i}")
 
 for app_id, action in {
     "pavucontrol": "float",
-    "blueman-manager": "float",
-    "org.gnome.Nautilus": "float",
+    "thunar": "float",
     "firefox": "workspace 2",
 }.items():
     print(f"rule {app_id} {action}")
 
+print("exec swaybg -i /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png -m fill")
 print("exec waybar")
 print("exec dunst")
