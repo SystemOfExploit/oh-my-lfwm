@@ -144,6 +144,8 @@ static void agd(struct lfwm_server *s, struct lfwm_workspace *ws,
 
 static void amo(struct lfwm_server *s, struct lfwm_workspace *ws,
                 int aw, int ah, int gi, int go, int n) {
+    (void)gi;
+    (void)n;
     struct lfwm_view *v;
     wl_list_for_each(v, &ws->views, link) {
         if (!v->mapped || v->floating || v->fullscreen) continue;

@@ -25,6 +25,7 @@
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <linux/input-event-codes.h>
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
 #include "lfwm_config.h"
@@ -79,7 +80,7 @@ struct lfwm_output {
 struct lfwm_keyboard {
     struct wl_listener key, modifiers;
     struct lfwm_server *server;
-    struct wlr_input_device *dev;
+    struct wlr_keyboard *keyboard;
 };
 
 struct lfwm_server {
@@ -369,7 +370,7 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
             aw(s);
         } break;
     case LFW_RELOAD:
-        wlr_log(WLR_INFO, "reloading config...");
+        wlr_log(WLR_INFO, "%s", "reloading config...");
         fca(s);
         for (int wi = 0; wi < 10; wi++) {
             dwl[wi] = -1; dwmr[wi] = -1; dwmc[wi] = -1; dwmp[wi] = -1;
@@ -401,8 +402,8 @@ static void kkn(struct wl_listener *l, void *data) {
     struct lfwm_server *s = kb->server;
     struct wlr_keyboard_key_event *ev = data;
     if (ev->state != WL_KEYBOARD_KEY_STATE_PRESSED) return;
-    uint32_t depressed = kb->dev->keyboard.modifiers.depressed;
-    xkb_keysym_t sym = xkb_state_key_get_one_sym(kb->dev->keyboard.xkb_state, ev->keycode);
+    uint32_t depressed = kb->keyboard->modifiers.depressed;
+    xkb_keysym_t sym = xkb_state_key_get_one_sym(kb->keyboard->xkb_state, ev->keycode);
     int best = -1;
     uint32_t best_mods = 0;
     for (int i = 0; i < s->bc; i++) {
@@ -414,8 +415,9 @@ static void kkn(struct wl_listener *l, void *data) {
 }
 
 static void kmn(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_keyboard *kb = wl_container_of(l, kb, modifiers);
-    wlr_seat_set_keyboard(kb->server->seat, kb->dev);
+    wlr_seat_set_keyboard(kb->server->seat, kb->keyboard);
 }
 
 static void hni(struct wl_listener *l, void *data) {
@@ -426,17 +428,19 @@ static void hni(struct wl_listener *l, void *data) {
         struct xkb_rule_names rules = {0};
         struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
         struct xkb_keymap *km = xkb_keymap_new_from_names(ctx, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
-        wlr_keyboard_set_keymap(&dev->keyboard, km);
+        struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(dev);
+        if (!keyboard) break;
+        wlr_keyboard_set_keymap(keyboard, km);
         xkb_keymap_unref(km);
         xkb_context_unref(ctx);
-        wlr_keyboard_set_repeat_info(&dev->keyboard, 25, 600);
+        wlr_keyboard_set_repeat_info(keyboard, 25, 600);
         struct lfwm_keyboard *k = calloc(1, sizeof(struct lfwm_keyboard));
-        k->server = s; k->dev = dev;
+        k->server = s; k->keyboard = keyboard;
         k->key.notify = kkn;
-        wl_signal_add(&dev->keyboard.events.key, &k->key);
+        wl_signal_add(&keyboard->events.key, &k->key);
         k->modifiers.notify = kmn;
-        wl_signal_add(&dev->keyboard.events.modifiers, &k->modifiers);
-        wlr_seat_set_keyboard(s->seat, dev);
+        wl_signal_add(&keyboard->events.modifiers, &k->modifiers);
+        wlr_seat_set_keyboard(s->seat, keyboard);
         break;
     }
     case WLR_INPUT_DEVICE_POINTER:
@@ -448,8 +452,8 @@ static void hni(struct wl_listener *l, void *data) {
 
 static void hcm(struct wl_listener *l, void *data) {
     struct lfwm_server *s = wl_container_of(l, s, cursor_motion);
-    struct wlr_event_pointer_motion *ev = data;
-    wlr_cursor_move(s->cursor, ev->device, ev->delta_x, ev->delta_y);
+    struct wlr_pointer_motion_event *ev = data;
+    wlr_cursor_move(s->cursor, &ev->pointer->base, ev->delta_x, ev->delta_y);
     struct lfwm_view *dragged = NULL;
     wl_list_for_each(dragged, &s->workspaces[s->current_ws].views, link) {
         if (dragged->dragging) break;
@@ -478,13 +482,13 @@ static void hcm(struct wl_listener *l, void *data) {
 
 static void hcma(struct wl_listener *l, void *data) {
     struct lfwm_server *s = wl_container_of(l, s, cursor_motion_absolute);
-    struct wlr_event_pointer_motion_absolute *ev = data;
-    wlr_cursor_warp_absolute(s->cursor, ev->device, ev->x, ev->y);
+    struct wlr_pointer_motion_absolute_event *ev = data;
+    wlr_cursor_warp_absolute(s->cursor, &ev->pointer->base, ev->x, ev->y);
 }
 
 static void hcb(struct wl_listener *l, void *data) {
     struct lfwm_server *s = wl_container_of(l, s, cursor_button);
-    struct wlr_event_pointer_button *ev = data;
+    struct wlr_pointer_button_event *ev = data;
     wlr_seat_pointer_notify_button(s->seat, ev->time_msec, ev->button, ev->state);
     if (ev->state == WL_POINTER_BUTTON_STATE_PRESSED) {
         struct lfwm_view *v = va(s, s->cursor->x, s->cursor->y);
@@ -516,9 +520,9 @@ static void hcb(struct wl_listener *l, void *data) {
 
 static void hca(struct wl_listener *l, void *data) {
     struct lfwm_server *s = wl_container_of(l, s, cursor_axis);
-    struct wlr_event_pointer_axis *ev = data;
+    struct wlr_pointer_axis_event *ev = data;
     wlr_seat_pointer_notify_axis(s->seat, ev->time_msec,
-        ev->orientation, ev->delta, ev->delta_discrete, ev->source);
+        ev->orientation, ev->delta, ev->delta_discrete, ev->source, ev->relative_direction);
 }
 
 static void hrc(struct wl_listener *l, void *data) {
@@ -536,14 +540,16 @@ static void hrss(struct wl_listener *l, void *data) {
 }
 
 static void hof(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_output *o = wl_container_of(l, o, frame);
-    wlr_scene_output_commit(o->scene_output);
+    wlr_scene_output_commit(o->scene_output, NULL);
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_scene_output_send_frame_done(o->scene_output, &now);
 }
 
 static void hod(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_output *o = wl_container_of(l, o, destroy);
     wl_list_remove(&o->link); wl_list_remove(&o->frame.link);
     wl_list_remove(&o->destroy.link); free(o);
@@ -552,12 +558,18 @@ static void hod(struct wl_listener *l, void *data) {
 static void hno(struct wl_listener *l, void *data) {
     struct lfwm_server *s = wl_container_of(l, s, new_output);
     struct wlr_output *wo = data;
+    struct wlr_output_state state;
+    wlr_output_state_init(&state);
+    wlr_output_state_set_enabled(&state, true);
     if (!wl_list_empty(&wo->modes)) {
         struct wlr_output_mode *mode = wlr_output_preferred_mode(wo);
-        if (mode) wlr_output_set_mode(wo, mode);
+        if (mode) wlr_output_state_set_mode(&state, mode);
     }
-    wlr_output_enable(wo, true);
-    if (!wlr_output_commit(wo)) return;
+    if (!wlr_output_commit_state(wo, &state)) {
+        wlr_output_state_finish(&state);
+        return;
+    }
+    wlr_output_state_finish(&state);
     struct lfwm_output *o = calloc(1, sizeof(struct lfwm_output));
     o->wlr_output = wo;
     o->scene_output = wlr_scene_output_create(s->scene, wo);
@@ -578,17 +590,20 @@ static void hxtrfs(struct wl_listener *l, void *data) {
 }
 
 static void hxsm(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_view *v = wl_container_of(l, v, map);
     v->mapped = true;
     fv(v->server, v);
 }
 
 static void hxsu(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_view *v = wl_container_of(l, v, unmap);
     v->mapped = false;
 }
 
 static void hxsd(struct wl_listener *l, void *data) {
+    (void)data;
     struct lfwm_view *v = wl_container_of(l, v, destroy);
     wl_list_remove(&v->link);
     if (v->scene_tree) wlr_scene_node_destroy(&v->scene_tree->node);

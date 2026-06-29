@@ -14,7 +14,7 @@ WLROOTS_PKG ?= wlroots-0.20
 PKGS := $(WLROOTS_PKG) wayland-server xkbcommon
 
 CFLAGS ?= -O2 -pipe
-CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\"
+CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\" -DWLR_USE_UNSTABLE
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS) 2>/dev/null)
 LDFLAGS += -Wl,--as-needed
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)
