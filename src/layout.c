@@ -20,8 +20,8 @@ static int view_count(struct lfwm_workspace *ws, bool tiled_only) {
 static struct lfwm_view *va(struct lfwm_server *s, int x, int y) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     for (struct lfwm_view *v = ws->tail; v; v = v->prev) {
-        if (v->mapped && x >= v->x && x < v->x + v->w &&
-            y >= v->y && y < v->y + v->h) {
+        if (v->mapped && x >= v->cx && x < v->cx + v->cw &&
+            y >= v->cy && y < v->cy + v->ch) {
             return v;
         }
     }
@@ -82,7 +82,8 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     if (v->w < 1) v->w = 1;
     if (v->h < 1) v->h = 1;
     set_border(s, v, bw);
-    place_window(s, v, v->x, v->y, v->w, v->h);
+    int py = v->floating ? v->y : v->y + s->bar_h;
+    place_window(s, v, v->x, py, v->w, v->h);
 }
 
 static void tf(struct lfwm_server *s, struct lfwm_view *v) {
@@ -237,47 +238,50 @@ static void avt(struct lfwm_server *s, struct lfwm_workspace *ws,
     each_tiled(ws, apply_vert_item, &c);
 }
 
-static struct lfwm_view *nth_tiled(struct lfwm_workspace *ws, int target) {
-    int idx = 0;
-    for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        if (!v->mapped || v->floating || v->fullscreen) continue;
-        if (idx++ == target) return v;
-    }
-    return NULL;
+static bool subtree_has_tiled(struct lfwm_node *n) {
+    if (!n) return false;
+    if (n->view) return n->view->mapped && !n->view->floating && !n->view->fullscreen;
+    return subtree_has_tiled(n->first) || subtree_has_tiled(n->second);
 }
 
-static void split_rect(struct lfwm_server *s, struct lfwm_workspace *ws,
-                       int first, int count, int x, int y, int w, int h,
-                       int gi, int depth) {
-    if (count <= 0 || w <= 0 || h <= 0) return;
-    if (count == 1) {
-        struct lfwm_view *v = nth_tiled(ws, first);
-        if (!v) return;
+static void layout_bsp_node(struct lfwm_server *s, struct lfwm_node *n,
+                            int x, int y, int w, int h, int gi) {
+    if (!n || w <= 0 || h <= 0) return;
+    if (n->view) {
+        struct lfwm_view *v = n->view;
+        if (!v->mapped || v->floating || v->fullscreen) return;
         v->x = x; v->y = y; v->w = w; v->h = h;
         ag(s, v);
         return;
     }
 
-    int left_count = (count + 1) / 2;
-    int right_count = count - left_count;
-    bool vertical = (depth % 2) == 0;
+    bool first_has = subtree_has_tiled(n->first);
+    bool second_has = subtree_has_tiled(n->second);
+    if (!first_has && !second_has) return;
+    if (!first_has) { layout_bsp_node(s, n->second, x, y, w, h, gi); return; }
+    if (!second_has) { layout_bsp_node(s, n->first, x, y, w, h, gi); return; }
 
-    if (vertical) {
-        int lw = (w - gi) / 2;
-        int rw = w - gi - lw;
-        split_rect(s, ws, first, left_count, x, y, lw, h, gi, depth + 1);
-        split_rect(s, ws, first + left_count, right_count, x + lw + gi, y, rw, h, gi, depth + 1);
+    if (n->vertical) {
+        int fw = (w - gi) / 2;
+        int sw = w - gi - fw;
+        layout_bsp_node(s, n->first, x, y, fw, h, gi);
+        layout_bsp_node(s, n->second, x + fw + gi, y, sw, h, gi);
     } else {
-        int th = (h - gi) / 2;
-        int bh = h - gi - th;
-        split_rect(s, ws, first, left_count, x, y, w, th, gi, depth + 1);
-        split_rect(s, ws, first + left_count, right_count, x, y + th + gi, w, bh, gi, depth + 1);
+        int fh = (h - gi) / 2;
+        int sh = h - gi - fh;
+        layout_bsp_node(s, n->first, x, y, w, fh, gi);
+        layout_bsp_node(s, n->second, x, y + fh + gi, w, sh, gi);
     }
 }
 
 static void adw(struct lfwm_server *s, struct lfwm_workspace *ws,
                 int awi, int ahi, int gi, int go, int n) {
-    split_rect(s, ws, 0, n, go, go, awi - go * 2, ahi - go * 2, gi, 0);
+    (void)n;
+    if (ws->root) {
+        layout_bsp_node(s, ws->root, go, go, awi - go * 2, ahi - go * 2, gi);
+        return;
+    }
+    amo(s, ws, awi, ahi, gi, go, n);
 }
 static void aff(struct lfwm_server *s, struct lfwm_workspace *ws) {
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
@@ -291,8 +295,11 @@ static void aw(struct lfwm_server *s) {
     int outw, outh, gi = s->gap_in, go = s->gap_out;
     if (!gos(s, &outw, &outh)) return;
 
+    outh -= s->bar_h;
+    if (outh < 1) outh = 1;
+
     int n = ct(ws);
-    if (n <= 1 && s->sg) { gi = 0; go = 0; }
+    if (n <= 1 && s->sg) gi = 0;
     if (n > 0) {
         switch (ws->layout) {
         case LFW_LAYOUT_MASTER_STACK: ams(s, ws, outw, outh, gi, go, n); break;

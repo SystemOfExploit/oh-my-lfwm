@@ -24,6 +24,7 @@
 enum drag_mode { DRAG_NONE, DRAG_MOVE, DRAG_RESIZE };
 
 struct lfwm_server;
+struct lfwm_node;
 
 struct lfwm_view {
     Window win;
@@ -40,12 +41,22 @@ struct lfwm_view {
     int cx, cy, cw, ch;
     bool configured;
     int sv_x, sv_y, sv_w, sv_h;
+    struct lfwm_node *node;
+};
+
+struct lfwm_node {
+    struct lfwm_node *parent;
+    struct lfwm_node *first;
+    struct lfwm_node *second;
+    struct lfwm_view *view;
+    bool vertical;
 };
 
 struct lfwm_workspace {
     struct lfwm_view *head;
     struct lfwm_view *tail;
     struct lfwm_view *focused;
+    struct lfwm_node *root;
     enum lfwm_layout layout;
     float master_ratio;
     int master_count;
@@ -60,6 +71,9 @@ struct lfwm_server {
     Display *dpy;
     int screen;
     Window root;
+    Window bar;
+    GC bar_gc;
+    int bar_h;
     bool running;
 
     struct lfwm_workspace workspaces[10];
@@ -114,6 +128,7 @@ static void tfs(struct lfwm_server *s, struct lfwm_view *v);
 static void ag(struct lfwm_server *s, struct lfwm_view *v);
 static struct lfwm_view *va(struct lfwm_server *s, int x, int y);
 static bool gos(struct lfwm_server *s, int *w, int *h);
+static void draw_bar(struct lfwm_server *s);
 
 static void ba(struct lfwm_server *s, unsigned int m, KeySym k,
                enum lfwm_action a, int arg, const char *c) {
@@ -208,6 +223,77 @@ static void list_insert_after(struct lfwm_workspace *ws, struct lfwm_view *pos, 
     pos->next = v;
 }
 
+static void list_insert_before(struct lfwm_workspace *ws, struct lfwm_view *pos, struct lfwm_view *v) {
+    if (!pos || !ws->head) {
+        list_insert_tail(ws, v);
+        return;
+    }
+    v->next = pos;
+    v->prev = pos->prev;
+    if (pos->prev) pos->prev->next = v; else ws->head = v;
+    pos->prev = v;
+}
+
+static struct lfwm_node *node_new_leaf(struct lfwm_view *v) {
+    struct lfwm_node *n = calloc(1, sizeof(*n));
+    if (!n) abort();
+    n->view = v;
+    v->node = n;
+    return n;
+}
+
+static void bsp_insert(struct lfwm_workspace *ws, struct lfwm_view *anchor,
+                       struct lfwm_view *v, bool vertical, bool new_first) {
+    struct lfwm_node *leaf = node_new_leaf(v);
+    if (!ws->root || !anchor || !anchor->node) {
+        ws->root = leaf;
+        return;
+    }
+
+    struct lfwm_node *old = anchor->node;
+    struct lfwm_node *parent = calloc(1, sizeof(*parent));
+    if (!parent) abort();
+    parent->parent = old->parent;
+    parent->vertical = vertical;
+    parent->first = new_first ? leaf : old;
+    parent->second = new_first ? old : leaf;
+    leaf->parent = parent;
+    old->parent = parent;
+
+    if (!parent->parent) ws->root = parent;
+    else if (parent->parent->first == old) parent->parent->first = parent;
+    else parent->parent->second = parent;
+}
+
+static void bsp_remove(struct lfwm_workspace *ws, struct lfwm_view *v) {
+    struct lfwm_node *leaf = v->node;
+    if (!leaf) return;
+    if (!leaf->parent) {
+        ws->root = NULL;
+        free(leaf);
+        v->node = NULL;
+        return;
+    }
+
+    struct lfwm_node *parent = leaf->parent;
+    struct lfwm_node *sibling = parent->first == leaf ? parent->second : parent->first;
+    sibling->parent = parent->parent;
+    if (!parent->parent) ws->root = sibling;
+    else if (parent->parent->first == parent) parent->parent->first = sibling;
+    else parent->parent->second = sibling;
+
+    free(leaf);
+    free(parent);
+    v->node = NULL;
+}
+
+static void free_bsp(struct lfwm_node *n) {
+    if (!n) return;
+    free_bsp(n->first);
+    free_bsp(n->second);
+    free(n);
+}
+
 static struct lfwm_view *find_view(struct lfwm_server *s, Window win) {
     for (int i = 0; i < 10; i++) {
         for (struct lfwm_view *v = s->workspaces[i].head; v; v = v->next)
@@ -291,9 +377,16 @@ static void apply_rule(struct lfwm_server *s, struct lfwm_view *v) {
         if (!match) continue;
 
         if (r->workspace >= 0 && r->workspace < 10 && v->ws != &s->workspaces[r->workspace]) {
-            list_remove(v->ws, v);
+            bool listed = v->prev || v->next || v->ws->head == v;
+            if (listed) {
+                bsp_remove(v->ws, v);
+                list_remove(v->ws, v);
+            }
             v->ws = &s->workspaces[r->workspace];
-            list_insert_tail(v->ws, v);
+            if (listed) {
+                list_insert_tail(v->ws, v);
+                bsp_insert(v->ws, v->ws->focused, v, true, false);
+            }
         }
         if (r->floating) v->floating = true;
         if (r->fullscreen) v->fullscreen = true;
@@ -317,6 +410,40 @@ static bool binding_matches_key(struct lfwm_server *s, const struct lfwm_binding
 
     KeySym current = XkbKeycodeToKeysym(s->dpy, (KeyCode)ev->keycode, 0, 0);
     return current == b->sym;
+}
+
+static void draw_bar(struct lfwm_server *s) {
+    if (!s->bar) return;
+    int sw = DisplayWidth(s->dpy, s->screen);
+    XMoveResizeWindow(s->dpy, s->bar, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
+    XSetForeground(s->dpy, s->bar_gc, 0x202020);
+    XFillRectangle(s->dpy, s->bar, s->bar_gc, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
+
+    int x = 8;
+    for (int i = 0; i < 10; i++) {
+        char label[8];
+        snprintf(label, sizeof(label), " %d ", i + 1);
+        int w = 26;
+        XSetForeground(s->dpy, s->bar_gc, i == s->current_ws ? s->ba : 0x444444);
+        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, 3, (unsigned int)w, (unsigned int)(s->bar_h - 6));
+        XSetForeground(s->dpy, s->bar_gc, 0xffffff);
+        XDrawString(s->dpy, s->bar, s->bar_gc, x + 7, 17, label, (int)strlen(label));
+        x += w + 5;
+    }
+    XFlush(s->dpy);
+}
+
+static void setup_bar(struct lfwm_server *s) {
+    int sw = DisplayWidth(s->dpy, s->screen);
+    s->bar_h = 24;
+    s->bar = XCreateSimpleWindow(s->dpy, s->root, 0, 0, (unsigned int)sw,
+                                 (unsigned int)s->bar_h, 0, 0x202020, 0x202020);
+    XSetWindowAttributes wa = { .override_redirect = True };
+    XChangeWindowAttributes(s->dpy, s->bar, CWOverrideRedirect, &wa);
+    XSelectInput(s->dpy, s->bar, ExposureMask);
+    s->bar_gc = XCreateGC(s->dpy, s->bar, 0, NULL);
+    XMapRaised(s->dpy, s->bar);
+    draw_bar(s);
 }
 
 static void setup_root_appearance(struct lfwm_server *s) {
@@ -445,6 +572,7 @@ static void wss(struct lfwm_server *s, int ws) {
     XChangeProperty(s->dpy, s->root, s->net_current_desktop, XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char *)&cur, 1);
     show_workspace(s, ws);
+    draw_bar(s);
     aw(s);
     if (s->workspaces[ws].focused) fv(s, s->workspaces[ws].focused);
     else if (s->workspaces[ws].tail) fv(s, s->workspaces[ws].tail);
@@ -675,21 +803,34 @@ static void manage_window(struct lfwm_server *s, Window win) {
     v->w = wa.width > 1 ? wa.width : 800;
     v->h = wa.height > 1 ? wa.height : 600;
     v->fullscreen = get_wm_state_fullscreen(s, win);
+    apply_rule(s, v);
+    ws = v->ws;
 
     Window rr, cr;
     int rx, ry, wx, wy;
     unsigned int mask;
     struct lfwm_view *anchor = ws->focused;
+    bool vertical = true, new_first = false;
     if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask)) {
         struct lfwm_view *hovered = va(s, rx, ry);
-        if (hovered && hovered->ws == ws)
+        if (hovered && hovered->ws == ws) {
             anchor = hovered;
+            int relx = rx - hovered->cx;
+            int rely = ry - hovered->cy;
+            if (hovered->cw > 0 && hovered->ch > 0) {
+                int dx = abs(relx * 2 - hovered->cw);
+                int dy = abs(rely * 2 - hovered->ch);
+                vertical = dx >= dy;
+                new_first = vertical ? relx < hovered->cw / 2 : rely < hovered->ch / 2;
+            }
+        }
     }
-    list_insert_after(ws, anchor, v);
+    if (new_first) list_insert_before(ws, anchor, v);
+    else list_insert_after(ws, anchor, v);
+    bsp_insert(ws, anchor, v, vertical, new_first);
     XSelectInput(s->dpy, win, EnterWindowMask | FocusChangeMask |
                  PropertyChangeMask | StructureNotifyMask);
     grab_buttons_for_window(s, win);
-    apply_rule(s, v);
 
     if (v->ws == &s->workspaces[s->current_ws]) {
         XMapWindow(s->dpy, win);
@@ -705,6 +846,7 @@ static void unmanage_window(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
     struct lfwm_workspace *ws = v->ws;
     XUngrabButton(s->dpy, AnyButton, AnyModifier, v->win);
+    bsp_remove(ws, v);
     list_remove(ws, v);
     if (s->drag_view == v) {
         s->dragging = false;
@@ -892,6 +1034,7 @@ static void init_server(struct lfwm_server *s) {
         s->workspaces[i].head = NULL;
         s->workspaces[i].tail = NULL;
         s->workspaces[i].focused = NULL;
+        s->workspaces[i].root = NULL;
     }
 
     reset_workspace_defaults(s);
@@ -993,6 +1136,9 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         XRefreshKeyboardMapping(&ev->xmapping);
         grab_keys(s);
         break;
+    case Expose:
+        if (ev->xexpose.window == s->bar) draw_bar(s);
+        break;
     case ConfigureNotify:
         if (ev->xconfigure.window == s->root) aw(s);
         break;
@@ -1004,6 +1150,8 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
 
 static void cleanup(struct lfwm_server *s) {
     for (int i = 0; i < 10; i++) {
+        free_bsp(s->workspaces[i].root);
+        s->workspaces[i].root = NULL;
         struct lfwm_view *v = s->workspaces[i].head;
         while (v) {
             struct lfwm_view *next = v->next;
@@ -1015,6 +1163,8 @@ static void cleanup(struct lfwm_server *s) {
     }
     fca(s);
     if (s->dpy) {
+        if (s->bar_gc) XFreeGC(s->dpy, s->bar_gc);
+        if (s->bar) XDestroyWindow(s->dpy, s->bar);
         XUngrabKey(s->dpy, AnyKey, AnyModifier, s->root);
         XCloseDisplay(s->dpy);
     }
