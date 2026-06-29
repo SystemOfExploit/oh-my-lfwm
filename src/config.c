@@ -5,7 +5,7 @@ static int   def_gap_out            = 8;
 static unsigned long def_ba         = 0x5292e2;
 static unsigned long def_bi         = 0x3a3a47;
 static enum lfwm_layout def_layout  = LFW_LAYOUT_MASTER_STACK;
-static float def_mr                 = 0.55f;
+static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
 static int   def_mp                 = 0;
 static unsigned int def_mod         = Mod4Mask;
@@ -267,8 +267,8 @@ static void lc(struct lfwm_server *s) {
     }
     if (!f) {
         fprintf(stderr, "lfwm: no config found, using defaults\n");
-        ba(s, def_mod, XK_Return, LFW_SPAWN, 0, "xterm");
-        ba(s, def_mod, XK_t, LFW_SPAWN, 0, "xterm");
+        ba(s, def_mod, XK_Return, LFW_SPAWN, 0, "kitty");
+        ba(s, def_mod, XK_t, LFW_SPAWN, 0, "kitty");
         ba(s, def_mod, XK_b, LFW_SPAWN, 0, "firefox");
         ba(s, def_mod, XK_q, LFW_CLOSE, 0, NULL);
         ba(s, def_mod, XK_Right, LFW_WS_NEXT, 0, NULL);
@@ -287,6 +287,7 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod, k, LFW_WS_SWITCH, i, NULL);
             ba(s, def_mod | ShiftMask, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
+        aa(s, "picom --corner-radius 10 --backend xrender --daemon || true");
         aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
         return;
     }

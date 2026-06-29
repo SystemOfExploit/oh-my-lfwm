@@ -353,14 +353,9 @@ static void fv(struct lfwm_server *s, struct lfwm_view *v) {
     if (v->ws != ws) return;
 
     ws->focused = v;
-    if (v != ws->tail) {
-        list_remove(ws, v);
-        list_insert_tail(ws, v);
-        ws->focused = v;
-    }
-
     XSetInputFocus(s->dpy, v->win, RevertToPointerRoot, CurrentTime);
-    XRaiseWindow(s->dpy, v->win);
+    if (v->floating || v->fullscreen)
+        XRaiseWindow(s->dpy, v->win);
     XChangeProperty(s->dpy, s->root, s->net_active_window, XA_WINDOW, 32,
                     PropModeReplace, (unsigned char *)&v->win, 1);
     aw(s);
@@ -721,6 +716,7 @@ static void begin_drag(struct lfwm_server *s, XButtonEvent *ev) {
 
     fv(s, v);
     if (!v->floating && !v->fullscreen) tf(s, v);
+    XRaiseWindow(s->dpy, v->win);
     s->dragging = true;
     s->drag_mode = ev->button == Button3 ? DRAG_RESIZE : DRAG_MOVE;
     s->drag_view = v;

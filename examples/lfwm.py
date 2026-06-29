@@ -3,21 +3,21 @@
 print("set border_width 2")
 print("set border_active #528AE0")
 print("set border_inactive #3B3B48")
-print("set gap_in 4")
-print("set gap_out 8")
+print("set gap_in 8")
+print("set gap_out 12")
 print("set smart_borders true")
 print("set smart_gaps true")
 print("set modifier SUPER")
 print("set drag_modifier SUPER")
 print("set master_position left")
 print("set default_layout MASTER_STACK")
-print("set master_ratio 0.55")
+print("set master_ratio 0.50")
 print("set master_count 1")
 
-for ws, layout in {1: "monocle", 2: "grid", 3: "master_stack", 4: "horiz"}.items():
+for ws, layout in {1: "master_stack", 2: "grid", 3: "master_stack", 4: "horiz"}.items():
     print(f"ws {ws} layout {layout}")
 
-for key, cmd in {"t": "xterm", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
+for key, cmd in {"t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
     print(f"bind SUPER {key} exec {cmd}")
 
 for line in [
@@ -42,5 +42,6 @@ for app_id, action in {
 }.items():
     print(f"rule {app_id} {action}")
 
+print("exec picom --corner-radius 10 --backend xrender --daemon || true")
 print("exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'")
 print("exec dunst")
