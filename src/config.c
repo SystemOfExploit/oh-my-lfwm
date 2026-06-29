@@ -5,6 +5,12 @@ static int   def_gap_out            = 8;
 static int   def_bar_height         = 26;
 static unsigned long def_ba         = 0xd79921;
 static unsigned long def_bi         = 0x504945;
+static unsigned long def_bar_bg     = 0x282828;
+static unsigned long def_bar_active = 0xd79921;
+static unsigned long def_bar_inactive = 0x3c3836;
+static unsigned long def_bar_active_fg = 0x282828;
+static unsigned long def_bar_inactive_fg = 0xebdbb2;
+static unsigned long def_bar_status_fg = 0xb8bb26;
 static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
 static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
@@ -226,6 +232,18 @@ static void pcl(struct lfwm_server *s, const char *line) {
         }
         else if (strcmp(k, "border_active") == 0) def_ba = parse_color(v, def_ba);
         else if (strcmp(k, "border_inactive") == 0) def_bi = parse_color(v, def_bi);
+        else if (strcmp(k, "bar_bg") == 0 || strcmp(k, "bar_background") == 0)
+            def_bar_bg = parse_color(v, def_bar_bg);
+        else if (strcmp(k, "bar_active") == 0)
+            def_bar_active = parse_color(v, def_bar_active);
+        else if (strcmp(k, "bar_inactive") == 0)
+            def_bar_inactive = parse_color(v, def_bar_inactive);
+        else if (strcmp(k, "bar_active_fg") == 0)
+            def_bar_active_fg = parse_color(v, def_bar_active_fg);
+        else if (strcmp(k, "bar_inactive_fg") == 0)
+            def_bar_inactive_fg = parse_color(v, def_bar_inactive_fg);
+        else if (strcmp(k, "bar_status_fg") == 0)
+            def_bar_status_fg = parse_color(v, def_bar_status_fg);
     } else if (strcmp(av[0], "ws") == 0 && ac >= 4) {
         int wi = atoi(av[1]) - 1;
         if (wi >= 0 && wi < 10) {
@@ -316,6 +334,124 @@ static bool load_config_dir(struct lfwm_server *s, const char *path) {
     return loaded;
 }
 
+static bool ensure_dir(const char *path) {
+    if (mkdir(path, 0755) == 0 || errno == EEXIST)
+        return true;
+    return false;
+}
+
+static bool write_default_user_config(const char *path, const char *dirpath) {
+    if (access(path, F_OK) == 0)
+        return true;
+
+    char base[1024];
+    strncpy(base, path, sizeof(base) - 1);
+    base[sizeof(base) - 1] = 0;
+    char *slash = strrchr(base, '/');
+    if (!slash) return false;
+    *slash = 0;
+
+    char parent[1024];
+    strncpy(parent, base, sizeof(parent) - 1);
+    parent[sizeof(parent) - 1] = 0;
+    slash = strrchr(parent, '/');
+    if (slash) {
+        *slash = 0;
+        if (*parent && !ensure_dir(parent))
+            return false;
+    }
+    if (!ensure_dir(base))
+        return false;
+    ensure_dir(dirpath);
+
+    FILE *f = fopen(path, "w");
+    if (!f) return false;
+
+    fprintf(f,
+        "set border_width 2\n"
+        "set border_active #d79921\n"
+        "set border_inactive #504945\n"
+        "set bar_bg #282828\n"
+        "set bar_active #d79921\n"
+        "set bar_inactive #3c3836\n"
+        "set bar_active_fg #282828\n"
+        "set bar_inactive_fg #ebdbb2\n"
+        "set bar_status_fg #b8bb26\n"
+        "set gap_in 8\n"
+        "set gap_out 12\n"
+        "set bar_height 26\n"
+        "set smart_borders false\n"
+        "set smart_gaps true\n"
+        "set modifier SUPER\n"
+        "set drag_modifier SUPER\n"
+        "set edge_resize true\n"
+        "set edge_resize_margin 16\n"
+        "set default_layout dwindle\n"
+        "set focus_follows_mouse true\n"
+        "set active_opacity 0.96\n"
+        "set inactive_opacity 0.88\n"
+        "set animations true\n"
+        "set animation_steps 8\n"
+        "set animation_delay_ms 2\n"
+        "set master_ratio 0.50\n"
+        "set master_count 1\n"
+        "\n"
+        "ws 1 layout dwindle\n"
+        "ws 2 layout grid\n"
+        "ws 3 layout dwindle\n"
+        "ws 4 layout horiz\n"
+        "\n"
+        "bind SUPER Return exec kitty\n"
+        "bind SUPER t exec kitty\n"
+        "bind SUPER b exec firefox\n"
+        "bind SUPER q close\n"
+        "bind SUPER v exec pavucontrol\n"
+        "bind SUPER e exec thunar\n"
+        "bind SUPER Right workspace_next\n"
+        "bind SUPER Left workspace_prev\n"
+        "bind SUPER Space layout_next\n"
+        "bind SUPER r reload\n"
+        "bind SUPER x toggle_float\n"
+        "bind SUPER Escape quit\n"
+        "\n"
+        "bind SUPER 1 workspace 1\n"
+        "bind SUPER 2 workspace 2\n"
+        "bind SUPER 3 workspace 3\n"
+        "bind SUPER 4 workspace 4\n"
+        "bind SUPER 5 workspace 5\n"
+        "bind SUPER 6 workspace 6\n"
+        "bind SUPER 7 workspace 7\n"
+        "bind SUPER 8 workspace 8\n"
+        "bind SUPER 9 workspace 9\n"
+        "bind SUPER 0 workspace 10\n"
+        "bind SUPER+SHIFT 1 movetows 1\n"
+        "bind SUPER+SHIFT 2 movetows 2\n"
+        "bind SUPER+SHIFT 3 movetows 3\n"
+        "bind SUPER+SHIFT 4 movetows 4\n"
+        "bind SUPER+SHIFT 5 movetows 5\n"
+        "bind SUPER+SHIFT 6 movetows 6\n"
+        "bind SUPER+SHIFT 7 movetows 7\n"
+        "bind SUPER+SHIFT 8 movetows 8\n"
+        "bind SUPER+SHIFT 9 movetows 9\n"
+        "bind SUPER+SHIFT 0 movetows 10\n"
+        "\n"
+        "rule pavucontrol float\n"
+        "rule thunar float\n"
+        "rule firefox workspace 2\n"
+        "rule Yelp float\n"
+        "rule zenity float\n"
+        "rule kdialog float\n"
+        "rule xmessage float\n"
+        "\n"
+        "exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#282828'\n"
+        "exec picom --config /dev/null --backend xrender\n"
+        "exec dunst\n");
+
+    fclose(f);
+    fprintf(stderr, "lfwm: wrote default user config to %s\n", path);
+    return true;
+}
+
 static void lc(struct lfwm_server *s) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -334,25 +470,63 @@ static void lc(struct lfwm_server *s) {
     snprintf(sys_pypath, sizeof(sys_pypath), "/etc/lfwm/lfwm.py");
     snprintf(sys_dirpath, sizeof(sys_dirpath), "/etc/lfwm/conf.d");
 
+    if (access(path, F_OK) != 0 && access(pypath, F_OK) != 0)
+        write_default_user_config(path, dirpath);
+
     FILE *f = NULL;
-    bool is_pipe = false;
     const char *selected = NULL;
-    if ((access(pypath, F_OK) == 0 || access(sys_pypath, F_OK) == 0) &&
-        system("command -v python3 >/dev/null 2>&1") == 0) {
-        selected = access(pypath, F_OK) == 0 ? pypath : sys_pypath;
+    bool have_python = system("command -v python3 >/dev/null 2>&1") == 0;
+
+    if (access(pypath, F_OK) == 0 && have_python) {
+        selected = pypath;
         char cmd[2048];
         snprintf(cmd, sizeof(cmd), "python3 \"%s\"", selected);
         f = popen(cmd, "r");
-        if (f) { fprintf(stderr, "lfwm: loading config from %s\n", selected); is_pipe = true; }
+        if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
     }
-    if (!f && (access(path, F_OK) == 0 || access(sys_path, F_OK) == 0)) {
-        selected = access(path, F_OK) == 0 ? path : sys_path;
-        load_config_path(s, selected);
-        load_config_dir(s, strcmp(selected, path) == 0 ? dirpath : sys_dirpath);
+
+    if (f) {
+        char line[4096];
+        while (fgets(line, sizeof(line), f)) pcl(s, line);
+        pclose(f);
+        load_config_dir(s, dirpath);
         return;
     }
-    if (!f && (load_config_dir(s, dirpath) || load_config_dir(s, sys_dirpath)))
+
+    if (access(path, F_OK) == 0) {
+        load_config_path(s, path);
+        load_config_dir(s, dirpath);
         return;
+    }
+
+    if (load_config_dir(s, dirpath))
+        return;
+
+    if (access(sys_pypath, F_OK) == 0 && have_python) {
+        selected = sys_pypath;
+        char cmd[2048];
+        snprintf(cmd, sizeof(cmd), "python3 \"%s\"", selected);
+        f = popen(cmd, "r");
+        if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+    }
+
+    if (f) {
+        char line[4096];
+        while (fgets(line, sizeof(line), f)) pcl(s, line);
+        pclose(f);
+        load_config_dir(s, sys_dirpath);
+        return;
+    }
+
+    if (access(sys_path, F_OK) == 0) {
+        load_config_path(s, sys_path);
+        load_config_dir(s, sys_dirpath);
+        return;
+    }
+
+    if (load_config_dir(s, sys_dirpath))
+        return;
+
     if (!f) {
         fprintf(stderr, "lfwm: no config found, using defaults\n");
         ba(s, def_mod, XK_Return, LFW_SPAWN, 0, "kitty");
@@ -377,19 +551,11 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod | ShiftMask, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
         aa(s, "picom --config /dev/null --backend xrender >/dev/null 2>&1");
-        aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
+        aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#282828'");
         ra(s, "Yelp", NULL, -1, true, false);
         ra(s, "zenity", NULL, -1, true, false);
         ra(s, "kdialog", NULL, -1, true, false);
         ra(s, "xmessage", NULL, -1, true, false);
         return;
     }
-
-    char line[4096];
-    while (fgets(line, sizeof(line), f)) pcl(s, line);
-    if (is_pipe) pclose(f); else fclose(f);
-    if (selected && strcmp(selected, pypath) == 0)
-        load_config_dir(s, dirpath);
-    else if (selected && strcmp(selected, sys_pypath) == 0)
-        load_config_dir(s, sys_dirpath);
 }

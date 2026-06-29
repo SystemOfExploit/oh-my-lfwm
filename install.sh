@@ -83,7 +83,8 @@ main() {
     info "Installing $name to $prefix"
     make PREFIX="$prefix" install
     info "Installed /usr/share/xsessions/lfwm.desktop"
-    info "System config installed to /etc/lfwm; user config can live in ~/.config/lfwm"
+    info "System fallback config installed to /etc/lfwm"
+    info "User config is ~/.config/lfwm/lfwm.conf and lfwm creates it on first start"
     schedule_reboot
 }
 

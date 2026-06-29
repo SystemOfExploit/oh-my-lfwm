@@ -121,9 +121,21 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
 
 static void tf(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v || v->fullscreen) return;
-    v->floating = !v->floating;
-    if (!v->floating)
+
+    if (!v->floating) {
+        if (v->configured) {
+            v->x = v->cx;
+            v->y = v->cy;
+            v->w = v->cw;
+            v->h = v->ch;
+        }
+        v->floating = true;
+        v->force_floating = true;
+    } else {
+        v->floating = false;
         v->force_floating = false;
+    }
+
     if (!v->floating && !v->node) {
         struct lfwm_view *anchor = NULL;
         for (struct lfwm_view *it = v->ws->head; it; it = it->next) {

@@ -106,6 +106,12 @@ struct lfwm_server {
     int gap_out;
     unsigned long ba;
     unsigned long bi;
+    unsigned long bar_bg;
+    unsigned long bar_active;
+    unsigned long bar_inactive;
+    unsigned long bar_active_fg;
+    unsigned long bar_inactive_fg;
+    unsigned long bar_status_fg;
     unsigned int modifier;
     unsigned int drag_mod;
     bool edge_resize;
@@ -167,6 +173,7 @@ static bool gos(struct lfwm_server *s, int *w, int *h);
 static void draw_bar(struct lfwm_server *s);
 static char *get_window_class(struct lfwm_server *s, Window win);
 static void detach_dragged_view(struct lfwm_server *s);
+static struct lfwm_view *target_view(struct lfwm_server *s);
 
 static void ba(struct lfwm_server *s, unsigned int m, KeySym k,
                enum lfwm_action a, int arg, const char *c) {
@@ -471,19 +478,22 @@ static int clamp_int(int v, int min, int max) {
 static time_t config_file_mtime(void) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
-    char path[1024], dirpath[1024], child[1024];
+    char path[1024], pypath[1024], dirpath[1024], child[1024];
     struct stat st;
     time_t newest = 0;
 
     if (xdg) {
         snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
+        snprintf(pypath, sizeof(pypath), "%s/lfwm/lfwm.py", xdg);
         snprintf(dirpath, sizeof(dirpath), "%s/lfwm/conf.d", xdg);
     } else {
         snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
+        snprintf(pypath, sizeof(pypath), "%s/.config/lfwm/lfwm.py", home ? home : ".");
         snprintf(dirpath, sizeof(dirpath), "%s/.config/lfwm/conf.d", home ? home : ".");
     }
 
     if (stat(path, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+    if (stat(pypath, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
     DIR *dir = opendir(dirpath);
     if (dir) {
         struct dirent *de;
@@ -496,7 +506,11 @@ static time_t config_file_mtime(void) {
         closedir(dir);
     }
 
-    if (!newest && stat("/etc/lfwm/lfwm.conf", &st) == 0) newest = st.st_mtime;
+    if (newest)
+        return newest;
+
+    if (stat("/etc/lfwm/lfwm.conf", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+    if (stat("/etc/lfwm/lfwm.py", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
     dir = opendir("/etc/lfwm/conf.d");
     if (dir) {
         struct dirent *de;
@@ -641,6 +655,13 @@ static unsigned int clean_mods(unsigned int state) {
     return state & ~(LockMask | Mod2Mask);
 }
 
+static bool drag_modifier_active(struct lfwm_server *s, unsigned int state) {
+    unsigned int mods = clean_mods(state);
+    if (s->drag_mod && (mods & s->drag_mod) == s->drag_mod)
+        return true;
+    return (mods & Mod4Mask) == Mod4Mask;
+}
+
 static bool binding_matches_key(struct lfwm_server *s, const struct lfwm_binding *b, XKeyEvent *ev) {
     if ((clean_mods(ev->state) & b->mods) != b->mods)
         return false;
@@ -687,7 +708,7 @@ static void draw_bar(struct lfwm_server *s) {
     int sw = DisplayWidth(s->dpy, s->screen);
     update_workarea(s);
     XMoveResizeWindow(s->dpy, s->bar, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
-    XSetForeground(s->dpy, s->bar_gc, 0x282828);
+    XSetForeground(s->dpy, s->bar_gc, s->bar_bg);
     XFillRectangle(s->dpy, s->bar, s->bar_gc, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
 
     int x = 8;
@@ -698,9 +719,9 @@ static void draw_bar(struct lfwm_server *s) {
         else snprintf(label, sizeof(label), " %d ", i + 1);
         int w = 22 + (int)strlen(label) * 7;
         bool active = i == s->current_ws;
-        XSetForeground(s->dpy, s->bar_gc, active ? 0xd79921 : 0x3c3836);
+        XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active : s->bar_inactive);
         XFillRectangle(s->dpy, s->bar, s->bar_gc, x, 4, (unsigned int)w, (unsigned int)(s->bar_h - 8));
-        XSetForeground(s->dpy, s->bar_gc, active ? 0x282828 : 0xebdbb2);
+        XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active_fg : s->bar_inactive_fg);
         XDrawString(s->dpy, s->bar, s->bar_gc, x + 8, 18, label, (int)strlen(label));
         x += w + 6;
     }
@@ -712,7 +733,7 @@ static void draw_bar(struct lfwm_server *s) {
     int len = (int)strlen(status);
     int tx = sw - len * 7 - 12;
     if (tx < x + 12) tx = x + 12;
-    XSetForeground(s->dpy, s->bar_gc, 0xb8bb26);
+    XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
     XDrawString(s->dpy, s->bar, s->bar_gc, tx, 18, status, len);
     XRaiseWindow(s->dpy, s->bar);
     XFlush(s->dpy);
@@ -722,7 +743,7 @@ static void setup_bar(struct lfwm_server *s) {
     int sw = DisplayWidth(s->dpy, s->screen);
     if (s->bar_h <= 0) s->bar_h = 26;
     s->bar = XCreateSimpleWindow(s->dpy, s->root, 0, 0, (unsigned int)sw,
-                                 (unsigned int)s->bar_h, 0, 0x282828, 0x282828);
+                                 (unsigned int)s->bar_h, 0, s->bar_bg, s->bar_bg);
     XSetWindowAttributes wa = { .override_redirect = True };
     XChangeWindowAttributes(s->dpy, s->bar, CWOverrideRedirect, &wa);
     XSelectInput(s->dpy, s->bar, ExposureMask);
@@ -736,7 +757,7 @@ static void setup_root_appearance(struct lfwm_server *s) {
     XColor color, exact;
     unsigned long bg = BlackPixel(s->dpy, s->screen);
 
-    if (XAllocNamedColor(s->dpy, cmap, "#666666", &color, &exact))
+    if (XAllocNamedColor(s->dpy, cmap, "#282828", &color, &exact))
         bg = color.pixel;
 
     XSetWindowBackground(s->dpy, s->root, bg);
@@ -749,14 +770,21 @@ static void setup_root_appearance(struct lfwm_server *s) {
 
 static void grab_buttons_for_window(struct lfwm_server *s, Window win) {
     unsigned int variants[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    unsigned int drag_mods[] = {s->drag_mod, Mod4Mask};
+    for (size_t d = 0; d < sizeof(drag_mods) / sizeof(drag_mods[0]); d++) {
+        if (d > 0 && drag_mods[d] == drag_mods[0])
+            continue;
+        for (size_t i = 0; i < sizeof(variants) / sizeof(variants[0]); i++) {
+            unsigned int mod = drag_mods[d] | variants[i];
+            XGrabButton(s->dpy, Button1, mod, win, False,
+                        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                        GrabModeAsync, GrabModeAsync, None, None);
+            XGrabButton(s->dpy, Button3, mod, win, False,
+                        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                        GrabModeAsync, GrabModeAsync, None, None);
+        }
+    }
     for (size_t i = 0; i < sizeof(variants) / sizeof(variants[0]); i++) {
-        unsigned int mod = s->drag_mod | variants[i];
-        XGrabButton(s->dpy, Button1, mod, win, False,
-                    ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                    GrabModeAsync, GrabModeAsync, None, None);
-        XGrabButton(s->dpy, Button3, mod, win, False,
-                    ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                    GrabModeAsync, GrabModeAsync, None, None);
         XGrabButton(s->dpy, Button1, variants[i], win, True,
                     ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
     }
@@ -943,6 +971,12 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_bg = def_bar_bg;
+    s->bar_active = def_bar_active;
+    s->bar_inactive = def_bar_inactive;
+    s->bar_active_fg = def_bar_active_fg;
+    s->bar_inactive_fg = def_bar_inactive_fg;
+    s->bar_status_fg = def_bar_status_fg;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -976,6 +1010,12 @@ static void reload_config(struct lfwm_server *s) {
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_bg = def_bar_bg;
+    s->bar_active = def_bar_active;
+    s->bar_inactive = def_bar_inactive;
+    s->bar_active_fg = def_bar_active_fg;
+    s->bar_inactive_fg = def_bar_inactive_fg;
+    s->bar_status_fg = def_bar_status_fg;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1007,7 +1047,13 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
     case LFW_FOCUS_MASTER: focus_master(s); break;
     case LFW_TOGGLE_FLOAT:
         if (s->dragging && s->drag_view) detach_dragged_view(s);
-        else if (ws->focused) tf(s, ws->focused);
+        else {
+            struct lfwm_view *v = target_view(s);
+            if (v) {
+                fv(s, v);
+                tf(s, v);
+            }
+        }
         break;
     case LFW_TOGGLE_FULLSCREEN: if (ws->focused) tfs(s, ws->focused); break;
     case LFW_TOGGLE_MAXIMIZE: if (ws->focused) tm(s, ws->focused); break;
@@ -1263,12 +1309,26 @@ static void detach_dragged_view(struct lfwm_server *s) {
     if (!v || v->fullscreen) return;
 
     v->floating = true;
+    v->force_floating = true;
     if (s->dragging && s->drag_view == v) {
         s->drag_was_floating = true;
         s->drag_temp_floating = false;
     }
     XRaiseWindow(s->dpy, v->win);
     ag(s, v);
+}
+
+static struct lfwm_view *target_view(struct lfwm_server *s) {
+    struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
+    if (ws->focused && ws->focused->ws == ws && ws->focused->mapped)
+        return ws->focused;
+
+    Window rr, cr;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask))
+        return va(s, rx, ry);
+    return NULL;
 }
 
 static void handle_key(struct lfwm_server *s, XKeyEvent *ev) {
@@ -1494,6 +1554,12 @@ static void init_server(struct lfwm_server *s) {
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_bg = def_bar_bg;
+    s->bar_active = def_bar_active;
+    s->bar_inactive = def_bar_inactive;
+    s->bar_active_fg = def_bar_active_fg;
+    s->bar_inactive_fg = def_bar_inactive_fg;
+    s->bar_status_fg = def_bar_status_fg;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1568,7 +1634,7 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         handle_key(s, &ev->xkey);
         break;
     case ButtonPress:
-        if ((clean_mods(ev->xbutton.state) & s->drag_mod) == s->drag_mod &&
+        if (drag_modifier_active(s, ev->xbutton.state) &&
             (ev->xbutton.button == Button1 || ev->xbutton.button == Button3)) {
             begin_drag(s, &ev->xbutton);
         } else {

@@ -1,8 +1,14 @@
 ﻿#!/usr/bin/env python3
 
 print("set border_width 2")
-print("set border_active #528AE0")
-print("set border_inactive #3B3B48")
+print("set border_active #d79921")
+print("set border_inactive #504945")
+print("set bar_bg #282828")
+print("set bar_active #d79921")
+print("set bar_inactive #3c3836")
+print("set bar_active_fg #282828")
+print("set bar_inactive_fg #ebdbb2")
+print("set bar_status_fg #b8bb26")
 print("set gap_in 8")
 print("set gap_out 12")
 print("set bar_height 26")
@@ -26,7 +32,7 @@ print("set master_count 1")
 for ws, layout in {1: "dwindle", 2: "grid", 3: "dwindle", 4: "horiz"}.items():
     print(f"ws {ws} layout {layout}")
 
-for key, cmd in {"t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
+for key, cmd in {"Return": "kitty", "t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
     print(f"bind SUPER {key} exec {cmd}")
 
 for line in [
@@ -35,7 +41,7 @@ for line in [
     "bind SUPER Left workspace_prev",
     "bind SUPER Space layout_next",
     "bind SUPER r reload",
-    "bind SUPER x float",
+    "bind SUPER x toggle_float",
     "bind SUPER Escape quit",
 ]:
     print(line)
@@ -56,6 +62,6 @@ for app_id, action in {
 }.items():
     print(f"rule {app_id} {action}")
 
-print("exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'")
+print("exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#282828'")
 print("exec picom --config /dev/null --backend xrender")
 print("exec dunst")
