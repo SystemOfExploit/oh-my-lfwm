@@ -10,11 +10,14 @@ SYSCONFDIR ?= /etc
 SESSION_DIR ?= /usr/share/wayland-sessions
 CONFIG_DIR := $(SYSCONFDIR)/lfwm
 
+WLROOTS_PKG ?= $(shell $(PKG_CONFIG) --exists wlroots 2>/dev/null && printf wlroots || $(PKG_CONFIG) --list-all 2>/dev/null | awk '/^wlroots([[:space:]-]|$$)/ {print $$1; exit}')
+PKGS := $(WLROOTS_PKG) wayland-server xkbcommon
+
 CFLAGS ?= -O2 -pipe
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\"
-CFLAGS += $(shell $(PKG_CONFIG) --cflags wlroots wayland-server xkbcommon)
+CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS) 2>/dev/null)
 LDFLAGS += -Wl,--as-needed
-LDLIBS += $(shell $(PKG_CONFIG) --libs wlroots wayland-server xkbcommon)
+LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)
 
 SRC := src/lfwm.c
 MODULES := src/config.c src/layout.c
@@ -22,10 +25,11 @@ OBJ := $(SRC:.c=.o)
 
 .PHONY: all clean install uninstall distclean check-deps
 
-all: $(NAME)
+all: check-deps $(NAME)
 
 check-deps:
-	@$(PKG_CONFIG) --exists wlroots wayland-server xkbcommon
+	@test -n "$(WLROOTS_PKG)" || { echo "wlroots pkg-config file not found. On Arch run: sudo pacman -S --needed base-devel pkgconf wayland wlroots libxkbcommon libinput libdrm mesa pixman systemd-libs"; exit 1; }
+	@$(PKG_CONFIG) --exists $(PKGS) || { echo "Missing pkg-config dependencies: $(PKGS)"; exit 1; }
 
 $(NAME): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)

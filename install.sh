@@ -38,11 +38,18 @@ install_deps() {
     fi
 }
 
+find_wlroots_pkg() {
+    if pkg-config --exists wlroots 2>/dev/null; then
+        printf '%s\n' wlroots
+        return 0
+    fi
+    pkg-config --list-all 2>/dev/null | awk '/^wlroots([[:space:]-]|$)/ {print $1; exit}'
+}
 check_deps() {
     for cmd in make pkg-config "${CC:-cc}"; do
         command -v "$cmd" >/dev/null 2>&1 || return 1
     done
-    pkg-config --exists wlroots wayland-server xkbcommon
+    wlroots_pkg="$(find_wlroots_pkg)"; [ -n "$wlroots_pkg" ] || fail "wlroots not found. On Arch run: sudo pacman -S --needed base-devel pkgconf wayland wlroots libxkbcommon libinput libdrm mesa pixman systemd-libs"; pkg-config --exists "$wlroots_pkg" wayland-server xkbcommon; export WLROOTS_PKG="$wlroots_pkg"; info "Using wlroots pkg-config module: $WLROOTS_PKG"
 }
 
 main() {
@@ -53,9 +60,9 @@ main() {
     check_deps || fail "Missing build dependencies after package installation"
     info "Building $name"
     make clean
-    make
+    make WLROOTS_PKG="$WLROOTS_PKG"
     info "Installing $name to $prefix"
-    make PREFIX="$prefix" install
+    make PREFIX="$prefix" WLROOTS_PKG="$WLROOTS_PKG" install
     info "Installed /usr/share/wayland-sessions/lfwm.desktop compatible with SDDM, GDM, LightDM, greetd and other Wayland-aware display managers"
     info "System config installed to /etc/lfwm; user config can live in ~/.config/lfwm"
 }
