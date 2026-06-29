@@ -11,8 +11,13 @@ static int   def_mp                 = 0;
 static unsigned int def_mod         = Mod4Mask;
 static unsigned int def_drag        = Mod4Mask;
 static bool  def_ffm                = true;
-static bool  def_sb                 = true;
+static bool  def_sb                 = false;
 static bool  def_sg                 = true;
+static float def_opacity_active     = 0.96f;
+static float def_opacity_inactive   = 0.88f;
+static bool  def_animations         = true;
+static int   def_animation_steps    = 6;
+static int   def_animation_delay_ms = 4;
 
 static int   dwl[10];
 static float dwmr[10];
@@ -56,6 +61,15 @@ static unsigned int pm(const char *s) {
 static bool pb(const char *s) {
     return strcasecmp(s, "true") == 0 || strcasecmp(s, "yes") == 0 ||
            strcasecmp(s, "on") == 0 || strcmp(s, "1") == 0;
+}
+
+static float pf(const char *s, float fallback) {
+    float v = (float)atof(s);
+    if (v <= 0.0f) return fallback;
+    if (v > 1.0f) v /= 100.0f;
+    if (v < 0.05f) v = 0.05f;
+    if (v > 1.0f) v = 1.0f;
+    return v;
 }
 
 static KeySym pk(const char *s) {
@@ -130,6 +144,7 @@ static void ba(struct lfwm_server *s, unsigned int m, KeySym k,
 static void ra(struct lfwm_server *s, const char *a, const char *t,
                int ws, bool f, bool fs);
 static void aa(struct lfwm_server *s, const char *c);
+static bool load_config_path(struct lfwm_server *s, const char *path);
 
 static void pcl(struct lfwm_server *s, const char *line) {
     char buf[4096];
@@ -149,7 +164,16 @@ static void pcl(struct lfwm_server *s, const char *line) {
     }
     if (ac == 0) return;
 
-    if (strcmp(av[0], "set") == 0 && ac >= 3) {
+    if (strcmp(av[0], "source") == 0 && ac >= 2) {
+        char path[1024];
+        const char *src = av[1];
+        if (src[0] == '~') {
+            const char *home = getenv("HOME");
+            snprintf(path, sizeof(path), "%s%s", home ? home : ".", src + 1);
+            src = path;
+        }
+        load_config_path(s, src);
+    } else if (strcmp(av[0], "set") == 0 && ac >= 3) {
         const char *k = av[1];
         const char *v = av[2];
         if (strcmp(k, "border_width") == 0) { def_bw_active = atoi(v); def_bw_inactive = atoi(v); }
@@ -171,6 +195,21 @@ static void pcl(struct lfwm_server *s, const char *line) {
         } else if (strcmp(k, "focus_follows_mouse") == 0) def_ffm = pb(v);
         else if (strcmp(k, "smart_borders") == 0) def_sb = pb(v);
         else if (strcmp(k, "smart_gaps") == 0) def_sg = pb(v);
+        else if (strcmp(k, "opacity") == 0) {
+            def_opacity_active = pf(v, def_opacity_active);
+            def_opacity_inactive = def_opacity_active;
+        } else if (strcmp(k, "active_opacity") == 0) def_opacity_active = pf(v, def_opacity_active);
+        else if (strcmp(k, "inactive_opacity") == 0) def_opacity_inactive = pf(v, def_opacity_inactive);
+        else if (strcmp(k, "animations") == 0) def_animations = pb(v);
+        else if (strcmp(k, "animation_steps") == 0) {
+            def_animation_steps = atoi(v);
+            if (def_animation_steps < 1) def_animation_steps = 1;
+            if (def_animation_steps > 30) def_animation_steps = 30;
+        } else if (strcmp(k, "animation_delay_ms") == 0) {
+            def_animation_delay_ms = atoi(v);
+            if (def_animation_delay_ms < 0) def_animation_delay_ms = 0;
+            if (def_animation_delay_ms > 50) def_animation_delay_ms = 50;
+        }
         else if (strcmp(k, "border_active") == 0) def_ba = parse_color(v, def_ba);
         else if (strcmp(k, "border_inactive") == 0) def_bi = parse_color(v, def_bi);
     } else if (strcmp(av[0], "ws") == 0 && ac >= 4) {
@@ -234,20 +273,52 @@ static void pcl(struct lfwm_server *s, const char *line) {
     }
 }
 
+static bool load_config_path(struct lfwm_server *s, const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+
+    fprintf(stderr, "lfwm: loading config from %s\n", path);
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) pcl(s, line);
+    fclose(f);
+    return true;
+}
+
+static bool load_config_dir(struct lfwm_server *s, const char *path) {
+    DIR *dir = opendir(path);
+    if (!dir) return false;
+
+    struct dirent *de;
+    char child[1024];
+    bool loaded = false;
+    while ((de = readdir(dir)) != NULL) {
+        size_t len = strlen(de->d_name);
+        if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0)
+            continue;
+        snprintf(child, sizeof(child), "%s/%s", path, de->d_name);
+        if (load_config_path(s, child)) loaded = true;
+    }
+    closedir(dir);
+    return loaded;
+}
+
 static void lc(struct lfwm_server *s) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
-    char path[1024], pypath[1024], sys_path[1024], sys_pypath[1024];
+    char path[1024], pypath[1024], dirpath[1024], sys_path[1024], sys_pypath[1024], sys_dirpath[1024];
 
     if (xdg) {
         snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
         snprintf(pypath, sizeof(pypath), "%s/lfwm/lfwm.py", xdg);
+        snprintf(dirpath, sizeof(dirpath), "%s/lfwm/conf.d", xdg);
     } else {
         snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
         snprintf(pypath, sizeof(pypath), "%s/.config/lfwm/lfwm.py", home ? home : ".");
+        snprintf(dirpath, sizeof(dirpath), "%s/.config/lfwm/conf.d", home ? home : ".");
     }
     snprintf(sys_path, sizeof(sys_path), "/etc/lfwm/lfwm.conf");
     snprintf(sys_pypath, sizeof(sys_pypath), "/etc/lfwm/lfwm.py");
+    snprintf(sys_dirpath, sizeof(sys_dirpath), "/etc/lfwm/conf.d");
 
     FILE *f = NULL;
     bool is_pipe = false;
@@ -260,11 +331,14 @@ static void lc(struct lfwm_server *s) {
         f = popen(cmd, "r");
         if (f) { fprintf(stderr, "lfwm: loading config from %s\n", selected); is_pipe = true; }
     }
-    if (!f) {
+    if (!f && (access(path, F_OK) == 0 || access(sys_path, F_OK) == 0)) {
         selected = access(path, F_OK) == 0 ? path : sys_path;
-        f = fopen(selected, "r");
-        if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+        load_config_path(s, selected);
+        load_config_dir(s, strcmp(selected, path) == 0 ? dirpath : sys_dirpath);
+        return;
     }
+    if (!f && (load_config_dir(s, dirpath) || load_config_dir(s, sys_dirpath)))
+        return;
     if (!f) {
         fprintf(stderr, "lfwm: no config found, using defaults\n");
         ba(s, def_mod, XK_Return, LFW_SPAWN, 0, "kitty");
@@ -287,6 +361,7 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod, k, LFW_WS_SWITCH, i, NULL);
             ba(s, def_mod | ShiftMask, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
+        aa(s, "picom --config /dev/null --backend xrender >/dev/null 2>&1");
         aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
         return;
     }
@@ -294,4 +369,8 @@ static void lc(struct lfwm_server *s) {
     char line[4096];
     while (fgets(line, sizeof(line), f)) pcl(s, line);
     if (is_pipe) pclose(f); else fclose(f);
+    if (selected && strcmp(selected, pypath) == 0)
+        load_config_dir(s, dirpath);
+    else if (selected && strcmp(selected, sys_pypath) == 0)
+        load_config_dir(s, sys_dirpath);
 }

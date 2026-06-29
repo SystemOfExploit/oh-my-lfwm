@@ -36,24 +36,42 @@ static void set_border(struct lfwm_server *s, struct lfwm_view *v, int bw) {
     XSetWindowBorderWidth(s->dpy, v->win, (unsigned int)bw);
 }
 
+static void set_opacity(struct lfwm_server *s, struct lfwm_view *v) {
+    if (!s->net_wm_window_opacity) return;
+    struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
+    float opacity = (v == ws->focused || v->fullscreen) ?
+        s->opacity_active : s->opacity_inactive;
+    if (opacity >= 0.999f) {
+        XDeleteProperty(s->dpy, v->win, s->net_wm_window_opacity);
+        return;
+    }
+    if (opacity < 0.05f) opacity = 0.05f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    unsigned long value = (unsigned long)(opacity * 0xffffffffUL);
+    XChangeProperty(s->dpy, v->win, s->net_wm_window_opacity, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&value, 1);
+}
+
 static void place_window(struct lfwm_server *s, struct lfwm_view *v, int x, int y, int w, int h) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
 
-    if (!v->configured || s->dragging || v->fullscreen) {
+    if (!v->configured || s->dragging || v->fullscreen || !s->animations || s->animation_steps <= 1) {
         XMoveResizeWindow(s->dpy, v->win, x, y, (unsigned int)w, (unsigned int)h);
     } else {
         int sx = v->cx, sy = v->cy, sw = v->cw, sh = v->ch;
-        for (int i = 1; i <= 5; i++) {
-            int nx = sx + (x - sx) * i / 5;
-            int ny = sy + (y - sy) * i / 5;
-            int nw = sw + (w - sw) * i / 5;
-            int nh = sh + (h - sh) * i / 5;
+        int steps = s->animation_steps;
+        for (int i = 1; i <= steps; i++) {
+            int nx = sx + (x - sx) * i / steps;
+            int ny = sy + (y - sy) * i / steps;
+            int nw = sw + (w - sw) * i / steps;
+            int nh = sh + (h - sh) * i / steps;
             if (nw < 1) nw = 1;
             if (nh < 1) nh = 1;
             XMoveResizeWindow(s->dpy, v->win, nx, ny, (unsigned int)nw, (unsigned int)nh);
             XFlush(s->dpy);
-            usleep(3500);
+            if (s->animation_delay_ms > 0)
+                usleep((unsigned int)s->animation_delay_ms * 1000);
         }
     }
 
@@ -70,6 +88,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     int bw = v == s->workspaces[s->current_ws].focused ? s->bw_active : s->bw_inactive;
     if (v->fullscreen) {
         set_border(s, v, 0);
+        set_opacity(s, v);
         v->x = 0; v->y = 0; v->w = ow; v->h = oh;
         place_window(s, v, 0, 0, ow, oh);
         XRaiseWindow(s->dpy, v->win);
@@ -82,6 +101,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     if (v->w < 1) v->w = 1;
     if (v->h < 1) v->h = 1;
     set_border(s, v, bw);
+    set_opacity(s, v);
     int py = v->floating ? v->y : v->y + s->bar_h;
     place_window(s, v, v->x, py, v->w, v->h);
 }

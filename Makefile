@@ -45,6 +45,8 @@ install: all
 	chmod 644 $(DESTDIR)$(SESSION_DIR)/lfwm.desktop
 	install -d $(DESTDIR)$(CONFIG_DIR)
 	install -m 644 examples/lfwm.conf $(DESTDIR)$(CONFIG_DIR)/lfwm.conf
+	install -d $(DESTDIR)$(CONFIG_DIR)/conf.d
+	if [ -d examples/conf.d ]; then install -m 644 examples/conf.d/*.conf $(DESTDIR)$(CONFIG_DIR)/conf.d/; fi
 	install -d $(DESTDIR)$(SHARE_DIR)/wallpapers
 	install -m 644 $(WALLPAPER_SRC) $(DESTDIR)$(SHARE_DIR)/wallpapers/gruvbox_wallpaper.png
 
@@ -53,6 +55,7 @@ uninstall:
 	rm -f $(DESTDIR)$(SESSION_DIR)/lfwm.desktop
 	rm -f $(DESTDIR)$(CONFIG_DIR)/lfwm.conf
 	rm -f $(DESTDIR)$(CONFIG_DIR)/lfwm.py
+	rm -rf $(DESTDIR)$(CONFIG_DIR)/conf.d
 	rm -f $(DESTDIR)$(SHARE_DIR)/wallpapers/gruvbox_wallpaper.png
 
 clean:

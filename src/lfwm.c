@@ -1,6 +1,7 @@
 ﻿#define _GNU_SOURCE
 
 #include <errno.h>
+#include <dirent.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <stdbool.h>
@@ -97,6 +98,11 @@ struct lfwm_server {
     bool ffm;
     bool sb;
     bool sg;
+    float opacity_active;
+    float opacity_inactive;
+    bool animations;
+    int animation_steps;
+    int animation_delay_ms;
     time_t config_mtime;
     time_t last_config_check;
 
@@ -108,6 +114,7 @@ struct lfwm_server {
     Atom net_wm_pid;
     Atom net_wm_state;
     Atom net_wm_state_fullscreen;
+    Atom net_wm_window_opacity;
     Atom net_supported;
     Atom net_client_list;
     Atom net_current_desktop;
@@ -327,14 +334,44 @@ static char *get_window_title(struct lfwm_server *s, Window win) {
 static time_t config_file_mtime(void) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
-    char path[1024];
+    char path[1024], dirpath[1024], child[1024];
     struct stat st;
+    time_t newest = 0;
 
-    if (xdg) snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
-    else snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
-    if (stat(path, &st) == 0) return st.st_mtime;
-    if (stat("/etc/lfwm/lfwm.conf", &st) == 0) return st.st_mtime;
-    return 0;
+    if (xdg) {
+        snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
+        snprintf(dirpath, sizeof(dirpath), "%s/lfwm/conf.d", xdg);
+    } else {
+        snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
+        snprintf(dirpath, sizeof(dirpath), "%s/.config/lfwm/conf.d", home ? home : ".");
+    }
+
+    if (stat(path, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+    DIR *dir = opendir(dirpath);
+    if (dir) {
+        struct dirent *de;
+        while ((de = readdir(dir)) != NULL) {
+            size_t len = strlen(de->d_name);
+            if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
+            snprintf(child, sizeof(child), "%s/%s", dirpath, de->d_name);
+            if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+        }
+        closedir(dir);
+    }
+
+    if (!newest && stat("/etc/lfwm/lfwm.conf", &st) == 0) newest = st.st_mtime;
+    dir = opendir("/etc/lfwm/conf.d");
+    if (dir) {
+        struct dirent *de;
+        while ((de = readdir(dir)) != NULL) {
+            size_t len = strlen(de->d_name);
+            if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
+            snprintf(child, sizeof(child), "/etc/lfwm/conf.d/%s", de->d_name);
+            if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+        }
+        closedir(dir);
+    }
+    return newest;
 }
 
 static char *get_window_class(struct lfwm_server *s, Window win) {
@@ -580,15 +617,21 @@ static void wss(struct lfwm_server *s, int ws) {
 
 static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
     if (!v || ws < 0 || ws >= 10 || v->ws == &s->workspaces[ws]) return;
+    struct lfwm_workspace *old_ws = v->ws;
+    struct lfwm_workspace *new_ws = &s->workspaces[ws];
     bool was_current = v->ws == &s->workspaces[s->current_ws];
-    list_remove(v->ws, v);
-    v->ws = &s->workspaces[ws];
-    list_insert_tail(v->ws, v);
+    bsp_remove(old_ws, v);
+    list_remove(old_ws, v);
+    v->ws = new_ws;
+    list_insert_tail(new_ws, v);
+    bsp_insert(new_ws, new_ws->focused, v, true, false);
     if (st) {
         wss(s, ws);
     } else if (was_current) {
         v->ignore_unmap++;
         XUnmapWindow(s->dpy, v->win);
+        aw(s);
+    } else if (new_ws == &s->workspaces[s->current_ws]) {
         aw(s);
     }
 }
@@ -645,6 +688,11 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
+    s->opacity_active = def_opacity_active;
+    s->opacity_inactive = def_opacity_inactive;
+    s->animations = def_animations;
+    s->animation_steps = def_animation_steps;
+    s->animation_delay_ms = def_animation_delay_ms;
 }
 
 static void apply_workspace_defaults(struct lfwm_server *s) {
@@ -669,6 +717,11 @@ static void reload_config(struct lfwm_server *s) {
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
+    s->opacity_active = def_opacity_active;
+    s->opacity_inactive = def_opacity_inactive;
+    s->animations = def_animations;
+    s->animation_steps = def_animation_steps;
+    s->animation_delay_ms = def_animation_delay_ms;
     apply_workspace_defaults(s);
     s->config_mtime = config_file_mtime();
     grab_keys(s);
@@ -818,10 +871,16 @@ static void manage_window(struct lfwm_server *s, Window win) {
             int relx = rx - hovered->cx;
             int rely = ry - hovered->cy;
             if (hovered->cw > 0 && hovered->ch > 0) {
-                int dx = abs(relx * 2 - hovered->cw);
-                int dy = abs(rely * 2 - hovered->ch);
-                vertical = dx >= dy;
-                new_first = vertical ? relx < hovered->cw / 2 : rely < hovered->ch / 2;
+                int cx = hovered->cw / 2;
+                int cy = hovered->ch / 2;
+                int dx = abs(relx - cx);
+                int dy = abs(rely - cy);
+                bool center = dx < hovered->cw / 8 && dy < hovered->ch / 8;
+                if (center)
+                    vertical = hovered->cw >= hovered->ch;
+                else
+                    vertical = dx * hovered->ch >= dy * hovered->cw;
+                new_first = vertical ? relx < cx : rely < cy;
             }
         }
     }
@@ -994,6 +1053,7 @@ static void init_atoms(struct lfwm_server *s) {
     s->net_wm_pid = XInternAtom(s->dpy, "_NET_WM_PID", False);
     s->net_wm_state = XInternAtom(s->dpy, "_NET_WM_STATE", False);
     s->net_wm_state_fullscreen = XInternAtom(s->dpy, "_NET_WM_STATE_FULLSCREEN", False);
+    s->net_wm_window_opacity = XInternAtom(s->dpy, "_NET_WM_WINDOW_OPACITY", False);
     s->net_supported = XInternAtom(s->dpy, "_NET_SUPPORTED", False);
     s->net_client_list = XInternAtom(s->dpy, "_NET_CLIENT_LIST", False);
     s->net_current_desktop = XInternAtom(s->dpy, "_NET_CURRENT_DESKTOP", False);
@@ -1044,6 +1104,11 @@ static void init_server(struct lfwm_server *s) {
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
+    s->opacity_active = def_opacity_active;
+    s->opacity_inactive = def_opacity_inactive;
+    s->animations = def_animations;
+    s->animation_steps = def_animation_steps;
+    s->animation_delay_ms = def_animation_delay_ms;
     apply_workspace_defaults(s);
     s->config_mtime = config_file_mtime();
 
