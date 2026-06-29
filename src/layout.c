@@ -100,15 +100,38 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
 
     if (v->w < 1) v->w = 1;
     if (v->h < 1) v->h = 1;
+    if (v->floating) {
+        int min_y = s->bar_h + s->gap_out;
+        int max_w = ow - s->gap_out * 2;
+        int max_h = oh - min_y - s->gap_out;
+        if (max_w < 80) max_w = ow;
+        if (max_h < 40) max_h = oh - s->bar_h;
+        if (v->w > max_w) v->w = max_w;
+        if (v->h > max_h) v->h = max_h;
+        v->x = clamp_int(v->x, s->gap_out, s->gap_out + max_w - v->w);
+        v->y = clamp_int(v->y, min_y, min_y + max_h - v->h);
+    }
     set_border(s, v, bw);
     set_opacity(s, v);
     int py = v->floating ? v->y : v->y + s->bar_h;
     place_window(s, v, v->x, py, v->w, v->h);
+    if (v->floating)
+        XRaiseWindow(s->dpy, v->win);
 }
 
 static void tf(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v || v->fullscreen) return;
     v->floating = !v->floating;
+    if (!v->floating && !v->node) {
+        struct lfwm_view *anchor = NULL;
+        for (struct lfwm_view *it = v->ws->head; it; it = it->next) {
+            if (it != v && it->node && !it->floating && !it->fullscreen) {
+                anchor = it;
+                break;
+            }
+        }
+        bsp_insert(v->ws, anchor, v, true, false);
+    }
     if (v->floating && v->maximized) v->maximized = false;
     aw(s);
 }
@@ -125,6 +148,16 @@ static void set_fullscreen_atom(struct lfwm_server *s, struct lfwm_view *v, bool
 static void tfs(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
     v->fullscreen = !v->fullscreen;
+    if (!v->fullscreen && !v->floating && !v->node) {
+        struct lfwm_view *anchor = NULL;
+        for (struct lfwm_view *it = v->ws->head; it; it = it->next) {
+            if (it != v && it->node && !it->floating && !it->fullscreen) {
+                anchor = it;
+                break;
+            }
+        }
+        bsp_insert(v->ws, anchor, v, true, false);
+    }
     set_fullscreen_atom(s, v, v->fullscreen);
     aw(s);
 }
@@ -332,5 +365,6 @@ static void aw(struct lfwm_server *s) {
         }
     }
     aff(s, ws);
+    draw_bar(s);
     XFlush(s->dpy);
 }

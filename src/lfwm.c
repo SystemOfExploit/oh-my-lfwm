@@ -29,6 +29,7 @@ struct lfwm_node;
 
 struct lfwm_view {
     Window win;
+    Window transient_for;
     struct lfwm_workspace *ws;
     struct lfwm_server *server;
     struct lfwm_view *prev;
@@ -37,6 +38,7 @@ struct lfwm_view {
     bool floating;
     bool fullscreen;
     bool maximized;
+    bool transient;
     int ignore_unmap;
     int x, y, w, h;
     int cx, cy, cw, ch;
@@ -115,10 +117,19 @@ struct lfwm_server {
     Atom net_wm_state;
     Atom net_wm_state_fullscreen;
     Atom net_wm_window_opacity;
+    Atom net_wm_window_type;
+    Atom net_wm_window_type_dialog;
+    Atom net_wm_window_type_menu;
+    Atom net_wm_window_type_utility;
+    Atom net_wm_window_type_splash;
+    Atom net_wm_window_type_toolbar;
+    Atom net_wm_window_type_dropdown_menu;
+    Atom net_wm_window_type_popup_menu;
     Atom net_supported;
     Atom net_client_list;
     Atom net_current_desktop;
     Atom net_number_of_desktops;
+    Atom net_workarea;
 
     bool dragging;
     enum drag_mode drag_mode;
@@ -331,6 +342,41 @@ static char *get_window_title(struct lfwm_server *s, Window win) {
     return title;
 }
 
+static bool atom_in_list(Atom needle, const Atom *atoms, unsigned long count) {
+    for (unsigned long i = 0; i < count; i++)
+        if (atoms[i] == needle) return true;
+    return false;
+}
+
+static bool is_window_type_floating(struct lfwm_server *s, Window win) {
+    Atom actual;
+    int format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    bool floating = false;
+
+    if (XGetWindowProperty(s->dpy, win, s->net_wm_window_type, 0, 32, False, XA_ATOM,
+                           &actual, &format, &nitems, &bytes_after, &data) != Success || !data)
+        return false;
+
+    Atom *atoms = (Atom *)data;
+    floating = atom_in_list(s->net_wm_window_type_dialog, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_menu, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_utility, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_splash, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_toolbar, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_dropdown_menu, atoms, nitems) ||
+               atom_in_list(s->net_wm_window_type_popup_menu, atoms, nitems);
+    XFree(data);
+    return floating;
+}
+
+static int clamp_int(int v, int min, int max) {
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+}
+
 static time_t config_file_mtime(void) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -402,6 +448,70 @@ static void update_client_list(struct lfwm_server *s) {
     free(wins);
 }
 
+static int workspace_count(struct lfwm_workspace *ws, bool tiled_only) {
+    int count = 0;
+    for (struct lfwm_view *v = ws->head; v; v = v->next) {
+        if (tiled_only && (v->floating || v->fullscreen)) continue;
+        count++;
+    }
+    return count;
+}
+
+static const char *layout_name(enum lfwm_layout layout) {
+    switch (layout) {
+    case LFW_LAYOUT_MASTER_STACK: return "master";
+    case LFW_LAYOUT_GRID: return "grid";
+    case LFW_LAYOUT_MONOCLE: return "monocle";
+    case LFW_LAYOUT_HORIZ: return "horiz";
+    case LFW_LAYOUT_VERT: return "vert";
+    case LFW_LAYOUT_DWINDLE: return "dwindle";
+    default: return "layout";
+    }
+}
+
+static void update_workarea(struct lfwm_server *s) {
+    if (!s->net_workarea) return;
+    int sw = DisplayWidth(s->dpy, s->screen);
+    int sh = DisplayHeight(s->dpy, s->screen);
+    long workarea[10 * 4];
+    for (int i = 0; i < 10; i++) {
+        workarea[i * 4 + 0] = 0;
+        workarea[i * 4 + 1] = s->bar_h;
+        workarea[i * 4 + 2] = sw;
+        workarea[i * 4 + 3] = sh > s->bar_h ? sh - s->bar_h : sh;
+    }
+    XChangeProperty(s->dpy, s->root, s->net_workarea, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)workarea, 10 * 4);
+}
+
+static void center_floating_view(struct lfwm_server *s, struct lfwm_view *v, struct lfwm_view *parent) {
+    int sw, sh;
+    if (!gos(s, &sw, &sh)) return;
+
+    int area_x = s->gap_out;
+    int area_y = s->bar_h + s->gap_out;
+    int area_w = sw - s->gap_out * 2;
+    int area_h = sh - s->bar_h - s->gap_out * 2;
+    if (area_w < 80) area_w = sw;
+    if (area_h < 40) area_h = sh - s->bar_h;
+
+    if (v->w < 80) v->w = 80;
+    if (v->h < 40) v->h = 40;
+    if (v->w > area_w) v->w = area_w;
+    if (v->h > area_h) v->h = area_h;
+
+    if (parent) {
+        v->x = parent->cx + (parent->cw - v->w) / 2;
+        v->y = parent->cy + (parent->ch - v->h) / 2;
+    } else {
+        v->x = area_x + (area_w - v->w) / 2;
+        v->y = area_y + (area_h - v->h) / 2;
+    }
+
+    v->x = clamp_int(v->x, area_x, area_x + area_w - v->w);
+    v->y = clamp_int(v->y, area_y, area_y + area_h - v->h);
+}
+
 static void apply_rule(struct lfwm_server *s, struct lfwm_view *v) {
     char *class_name = get_window_class(s, v->win);
     char *title = get_window_title(s, v->win);
@@ -452,27 +562,42 @@ static bool binding_matches_key(struct lfwm_server *s, const struct lfwm_binding
 static void draw_bar(struct lfwm_server *s) {
     if (!s->bar) return;
     int sw = DisplayWidth(s->dpy, s->screen);
+    update_workarea(s);
     XMoveResizeWindow(s->dpy, s->bar, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
-    XSetForeground(s->dpy, s->bar_gc, 0x202020);
+    XSetForeground(s->dpy, s->bar_gc, 0x181a20);
     XFillRectangle(s->dpy, s->bar, s->bar_gc, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
 
     int x = 8;
     for (int i = 0; i < 10; i++) {
-        char label[8];
-        snprintf(label, sizeof(label), " %d ", i + 1);
-        int w = 26;
-        XSetForeground(s->dpy, s->bar_gc, i == s->current_ws ? s->ba : 0x444444);
-        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, 3, (unsigned int)w, (unsigned int)(s->bar_h - 6));
-        XSetForeground(s->dpy, s->bar_gc, 0xffffff);
-        XDrawString(s->dpy, s->bar, s->bar_gc, x + 7, 17, label, (int)strlen(label));
-        x += w + 5;
+        int count = workspace_count(&s->workspaces[i], false);
+        char label[16];
+        if (count > 0) snprintf(label, sizeof(label), " %d:%d ", i + 1, count);
+        else snprintf(label, sizeof(label), " %d ", i + 1);
+        int w = 22 + (int)strlen(label) * 7;
+        bool active = i == s->current_ws;
+        XSetForeground(s->dpy, s->bar_gc, active ? s->ba : 0x30343d);
+        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, 4, (unsigned int)w, (unsigned int)(s->bar_h - 8));
+        XSetForeground(s->dpy, s->bar_gc, active ? 0xffffff : 0xc9d1d9);
+        XDrawString(s->dpy, s->bar, s->bar_gc, x + 8, 18, label, (int)strlen(label));
+        x += w + 6;
     }
+    struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
+    char status[128];
+    snprintf(status, sizeof(status), "lfwm | ws %d | %s | tiled %d | total %d",
+             s->current_ws + 1, layout_name(ws->layout),
+             workspace_count(ws, true), workspace_count(ws, false));
+    int len = (int)strlen(status);
+    int tx = sw - len * 7 - 12;
+    if (tx < x + 12) tx = x + 12;
+    XSetForeground(s->dpy, s->bar_gc, 0xaeb7c2);
+    XDrawString(s->dpy, s->bar, s->bar_gc, tx, 18, status, len);
+    XRaiseWindow(s->dpy, s->bar);
     XFlush(s->dpy);
 }
 
 static void setup_bar(struct lfwm_server *s) {
     int sw = DisplayWidth(s->dpy, s->screen);
-    s->bar_h = 24;
+    if (s->bar_h <= 0) s->bar_h = 26;
     s->bar = XCreateSimpleWindow(s->dpy, s->root, 0, 0, (unsigned int)sw,
                                  (unsigned int)s->bar_h, 0, 0x202020, 0x202020);
     XSetWindowAttributes wa = { .override_redirect = True };
@@ -624,7 +749,8 @@ static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
     list_remove(old_ws, v);
     v->ws = new_ws;
     list_insert_tail(new_ws, v);
-    bsp_insert(new_ws, new_ws->focused, v, true, false);
+    if (!v->floating && !v->fullscreen)
+        bsp_insert(new_ws, new_ws->focused, v, true, false);
     if (st) {
         wss(s, ws);
     } else if (was_current) {
@@ -685,6 +811,7 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     }
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
@@ -714,6 +841,7 @@ static void reload_config(struct lfwm_server *s) {
     lc(s);
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
@@ -856,15 +984,33 @@ static void manage_window(struct lfwm_server *s, Window win) {
     v->w = wa.width > 1 ? wa.width : 800;
     v->h = wa.height > 1 ? wa.height : 600;
     v->fullscreen = get_wm_state_fullscreen(s, win);
+
+    Window transient_for = None;
+    struct lfwm_view *parent = NULL;
+    if (XGetTransientForHint(s->dpy, win, &transient_for) && transient_for != None) {
+        parent = find_view(s, transient_for);
+        v->transient_for = transient_for;
+        v->transient = true;
+        v->floating = true;
+        if (parent) v->ws = parent->ws;
+    }
+    if (is_window_type_floating(s, win)) {
+        v->transient = true;
+        v->floating = true;
+    }
+
     apply_rule(s, v);
     ws = v->ws;
+    if (v->floating && !v->fullscreen)
+        center_floating_view(s, v, parent && parent->ws == ws ? parent : NULL);
 
     Window rr, cr;
     int rx, ry, wx, wy;
     unsigned int mask;
     struct lfwm_view *anchor = ws->focused;
     bool vertical = true, new_first = false;
-    if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask)) {
+    if (!v->floating && !v->fullscreen &&
+        XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask)) {
         struct lfwm_view *hovered = va(s, rx, ry);
         if (hovered && hovered->ws == ws) {
             anchor = hovered;
@@ -884,15 +1030,19 @@ static void manage_window(struct lfwm_server *s, Window win) {
             }
         }
     }
-    if (new_first) list_insert_before(ws, anchor, v);
-    else list_insert_after(ws, anchor, v);
-    bsp_insert(ws, anchor, v, vertical, new_first);
+    if (v->floating || v->fullscreen) {
+        list_insert_tail(ws, v);
+    } else {
+        if (new_first) list_insert_before(ws, anchor, v);
+        else list_insert_after(ws, anchor, v);
+        bsp_insert(ws, anchor, v, vertical, new_first);
+    }
     XSelectInput(s->dpy, win, EnterWindowMask | FocusChangeMask |
                  PropertyChangeMask | StructureNotifyMask);
     grab_buttons_for_window(s, win);
 
     if (v->ws == &s->workspaces[s->current_ws]) {
-        XMapWindow(s->dpy, win);
+        XMapRaised(s->dpy, win);
         fv(s, v);
     } else {
         v->ignore_unmap++;
@@ -904,6 +1054,8 @@ static void manage_window(struct lfwm_server *s, Window win) {
 static void unmanage_window(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
     struct lfwm_workspace *ws = v->ws;
+    struct lfwm_view *parent = v->transient_for ? find_view(s, v->transient_for) : NULL;
+    if (parent == v) parent = NULL;
     XUngrabButton(s->dpy, AnyButton, AnyModifier, v->win);
     bsp_remove(ws, v);
     list_remove(ws, v);
@@ -914,7 +1066,8 @@ static void unmanage_window(struct lfwm_server *s, struct lfwm_view *v) {
     free(v);
     if (ws == &s->workspaces[s->current_ws]) {
         aw(s);
-        if (ws->tail) fv(s, ws->tail);
+        if (parent && parent->ws == ws) fv(s, parent);
+        else if (ws->tail) fv(s, ws->tail);
     }
     update_client_list(s);
 }
@@ -932,6 +1085,7 @@ static void configure_window(struct lfwm_server *s, XConfigureRequestEvent *ev) 
             if (ev->value_mask & CWY) v->y = ev->y;
             if (ev->value_mask & CWWidth) v->w = ev->width;
             if (ev->value_mask & CWHeight) v->h = ev->height;
+            ag(s, v);
         }
     } else {
         ag(s, v);
@@ -1058,15 +1212,26 @@ static void init_atoms(struct lfwm_server *s) {
     s->net_client_list = XInternAtom(s->dpy, "_NET_CLIENT_LIST", False);
     s->net_current_desktop = XInternAtom(s->dpy, "_NET_CURRENT_DESKTOP", False);
     s->net_number_of_desktops = XInternAtom(s->dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+    s->net_workarea = XInternAtom(s->dpy, "_NET_WORKAREA", False);
+    s->net_wm_window_type = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE", False);
+    s->net_wm_window_type_dialog = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    s->net_wm_window_type_menu = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_MENU", False);
+    s->net_wm_window_type_utility = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+    s->net_wm_window_type_splash = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
+    s->net_wm_window_type_toolbar = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", False);
+    s->net_wm_window_type_dropdown_menu = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", False);
+    s->net_wm_window_type_popup_menu = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_POPUP_MENU", False);
 
     Atom supported[] = {
         s->net_active_window,
         s->net_wm_name,
         s->net_wm_state,
         s->net_wm_state_fullscreen,
+        s->net_wm_window_type,
         s->net_client_list,
         s->net_current_desktop,
         s->net_number_of_desktops,
+        s->net_workarea,
     };
     XChangeProperty(s->dpy, s->root, s->net_supported, XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)supported,
@@ -1101,6 +1266,7 @@ static void init_server(struct lfwm_server *s) {
     lc(s);
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
@@ -1127,6 +1293,7 @@ static void init_server(struct lfwm_server *s) {
     XSetErrorHandler(xerror);
 
     init_atoms(s);
+    setup_bar(s);
     grab_keys(s);
     scan_existing_windows(s);
     for (int i = 0; i < s->ac; i++) spawn_cmd(s->autostart_cmds[i]);

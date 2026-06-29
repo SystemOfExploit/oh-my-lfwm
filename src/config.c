@@ -2,6 +2,7 @@
 static int   def_bw_inactive        = 2;
 static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
+static int   def_bar_height         = 26;
 static unsigned long def_ba         = 0x5292e2;
 static unsigned long def_bi         = 0x3a3a47;
 static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
@@ -182,6 +183,11 @@ static void pcl(struct lfwm_server *s, const char *line) {
         else if (strcmp(k, "gap_size") == 0) { def_gap_in = atoi(v); def_gap_out = atoi(v); }
         else if (strcmp(k, "gap_in") == 0) def_gap_in = atoi(v);
         else if (strcmp(k, "gap_out") == 0) def_gap_out = atoi(v);
+        else if (strcmp(k, "bar_height") == 0) {
+            def_bar_height = atoi(v);
+            if (def_bar_height < 18) def_bar_height = 18;
+            if (def_bar_height > 96) def_bar_height = 96;
+        }
         else if (strcmp(k, "modifier") == 0) def_mod = pm(v);
         else if (strcmp(k, "drag_modifier") == 0) def_drag = pm(v);
         else if (strcmp(k, "default_layout") == 0) def_layout = pl(v);
