@@ -18,11 +18,11 @@ need_root() {
 }
 
 install_deps() {
-    if command -v apt-get >/dev/null 2>&1; then
+    if command -v pacman >/dev/null 2>&1; then
+        pacman -S --needed --noconfirm base-devel pkgconf wayland wlroots0.20 libxkbcommon libinput libdrm mesa pixman systemd-libs
+    elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
         apt-get install -y build-essential pkg-config libwayland-dev libwlroots-dev libxkbcommon-dev libinput-dev libdrm-dev libgbm-dev libpixman-1-dev libudev-dev
-    elif command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf wayland wlroots libxkbcommon libinput libdrm mesa pixman systemd-libs
     elif command -v dnf >/dev/null 2>&1; then
         dnf install -y gcc make pkgconf-pkg-config wayland-devel wlroots-devel libxkbcommon-devel libinput-devel libdrm-devel mesa-libgbm-devel pixman-devel systemd-devel
     elif command -v zypper >/dev/null 2>&1; then
@@ -34,22 +34,40 @@ install_deps() {
     elif command -v emerge >/dev/null 2>&1; then
         emerge --ask=n dev-build/pkgconf dev-libs/wayland gui-libs/wlroots x11-libs/libxkbcommon dev-libs/libinput x11-libs/libdrm media-libs/mesa x11-libs/pixman
     else
-        warn "Unknown package manager. Install wlroots, wayland-server, xkbcommon, gcc, make and pkg-config manually."
+        warn "Unknown package manager. Install wlroots0.20, wayland, xkbcommon, gcc, make and pkgconf manually."
     fi
 }
 
 find_wlroots_pkg() {
-    if pkg-config --exists wlroots 2>/dev/null; then
-        printf '%s\n' wlroots
-        return 0
-    fi
-    pkg-config --list-all 2>/dev/null | awk '/^wlroots([[:space:]-]|$)/ {print $1; exit}'
-}
-check_deps() {
-    for cmd in make pkg-config "${CC:-cc}"; do
-        command -v "$cmd" >/dev/null 2>&1 || return 1
+    for pkg in wlroots-0.20 wlroots0.20 wlroots; do
+        if pkg-config --exists "$pkg" 2>/dev/null; then
+            printf '%s\n' "$pkg"
+            return 0
+        fi
     done
-    wlroots_pkg="$(find_wlroots_pkg)"; [ -n "$wlroots_pkg" ] || fail "wlroots not found. On Arch run: sudo pacman -S --needed base-devel pkgconf wayland wlroots libxkbcommon libinput libdrm mesa pixman systemd-libs"; pkg-config --exists "$wlroots_pkg" wayland-server xkbcommon; export WLROOTS_PKG="$wlroots_pkg"; info "Using wlroots pkg-config module: $WLROOTS_PKG"
+    pkg-config --list-all 2>/dev/null | awk '/^wlroots[-0-9.]*[[:space:]]/ {print $1; exit}'
+}
+
+check_pkg() {
+    pkg-config --exists "$1" 2>/dev/null || fail "pkg-config module not found: $1"
+}
+
+check_deps() {
+    command -v make >/dev/null 2>&1 || fail "command not found: make"
+    command -v pkg-config >/dev/null 2>&1 || fail "command not found: pkg-config/pkgconf"
+    command -v "${CC:-cc}" >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || fail "C compiler not found: install base-devel"
+
+    wlroots_pkg="$(find_wlroots_pkg)"
+    if [ -z "$wlroots_pkg" ]; then
+        pkg-config --list-all 2>/dev/null | grep -i wlroots || true
+        fail "wlroots0.20 pkg-config module not found. Try: sudo pacman -S --needed wlroots0.20 pkgconf"
+    fi
+
+    check_pkg "$wlroots_pkg"
+    check_pkg wayland-server
+    check_pkg xkbcommon
+    export WLROOTS_PKG="$wlroots_pkg"
+    info "Using wlroots pkg-config module: $WLROOTS_PKG"
 }
 
 main() {
@@ -57,13 +75,13 @@ main() {
     cd "$(dirname "$0")"
     info "Installing dependencies for supported distributions"
     install_deps
-    check_deps || fail "Missing build dependencies after package installation"
+    check_deps
     info "Building $name"
     make clean
     make WLROOTS_PKG="$WLROOTS_PKG"
     info "Installing $name to $prefix"
     make PREFIX="$prefix" WLROOTS_PKG="$WLROOTS_PKG" install
-    info "Installed /usr/share/wayland-sessions/lfwm.desktop compatible with SDDM, GDM, LightDM, greetd and other Wayland-aware display managers"
+    info "Installed /usr/share/wayland-sessions/lfwm.desktop"
     info "System config installed to /etc/lfwm; user config can live in ~/.config/lfwm"
 }
 
