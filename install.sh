@@ -39,13 +39,14 @@ install_deps() {
 }
 
 find_wlroots_pkg() {
-    for pkg in wlroots-0.20 wlroots0.20 wlroots; do
-        if pkg-config --exists "$pkg" 2>/dev/null; then
-            printf '%s\n' "$pkg"
-            return 0
-        fi
-    done
-    pkg-config --list-all 2>/dev/null | awk '/^wlroots[-0-9.]*[[:space:]]/ {print $1; exit}'
+    if pkg-config --exists wlroots-0.20 2>/dev/null; then
+        printf '%s\n' wlroots-0.20
+        return 0
+    fi
+    if pkg-config --exists wlroots0.20 2>/dev/null; then
+        printf '%s\n' wlroots0.20
+        return 0
+    fi
 }
 
 check_pkg() {
@@ -60,7 +61,7 @@ check_deps() {
     wlroots_pkg="$(find_wlroots_pkg)"
     if [ -z "$wlroots_pkg" ]; then
         pkg-config --list-all 2>/dev/null | grep -i wlroots || true
-        fail "wlroots0.20 pkg-config module not found. Try: sudo pacman -S --needed wlroots0.20 pkgconf"
+        fail "wlroots0.20 installed, but pkg-config module wlroots-0.20 was not found"
     fi
 
     check_pkg "$wlroots_pkg"

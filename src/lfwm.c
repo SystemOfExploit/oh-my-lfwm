@@ -1,4 +1,4 @@
-﻿#define _GNU_SOURCE
+#define _GNU_SOURCE
 #include <assert.h>
 #include <ctype.h>
 #include <stdbool.h>
@@ -41,7 +41,7 @@ struct lfwm_view {
     struct wlr_xdg_surface *xdg_surface;
     struct wlr_scene_tree *scene_tree;
     struct wlr_scene_rect *border;
-    struct wlr_scene_node *surface_node;
+    struct wlr_scene_tree *surface_tree;
     bool mapped;
     bool floating;
     bool fullscreen;
@@ -91,7 +91,7 @@ struct lfwm_server {
     struct wlr_xdg_shell *xdg_shell;
     struct wlr_scene *scene;
     struct wlr_output_layout *output_layout;
-    struct wlr_scene_output_layout *scene_layout;
+
     struct wlr_cursor *cursor;
     struct wlr_xcursor_manager *cursor_mgr;
     struct wlr_seat *seat;
@@ -562,7 +562,7 @@ static void hno(struct wl_listener *l, void *data) {
     o->wlr_output = wo;
     o->scene_output = wlr_scene_output_create(s->scene, wo);
     wl_list_insert(&s->outputs, &o->link);
-    wlr_scene_output_layout_add_output(s->scene_layout, wo, 0, 0);
+    wlr_output_layout_add_auto(s->output_layout, wo);
     o->frame.notify = hof;
     wl_signal_add(&wo->events.frame, &o->frame);
     o->destroy.notify = hod;
@@ -626,15 +626,15 @@ static void hnxds(struct wl_listener *l, void *data) {
     v->scene_tree = wlr_scene_tree_create(ws->scene_tree);
     if (!v->scene_tree) { free(v); return; }
     v->border = wlr_scene_rect_create(v->scene_tree, 100, 100, s->bi);
-    v->surface_node = wlr_scene_subsurface_tree_create(v->scene_tree, xdg_surface->surface);
-    if (!v->surface_node) { wlr_scene_node_destroy(&v->scene_tree->node); free(v); return; }
-    wlr_scene_node_set_position(v->surface_node, s->bw_inactive, s->bw_inactive);
+    v->surface_tree = wlr_scene_xdg_surface_create(v->scene_tree, xdg_surface);
+    if (!v->surface_tree) { wlr_scene_node_destroy(&v->scene_tree->node); free(v); return; }
+    wlr_scene_node_set_position(&v->surface_tree->node, s->bw_inactive, s->bw_inactive);
     wl_list_insert(&ws->views, &v->link);
     wlr_scene_node_set_enabled(&v->scene_tree->node, true);
     v->map.notify = hxsm;
-    wl_signal_add(&xdg_surface->events.map, &v->map);
+    wl_signal_add(&xdg_surface->surface->events.map, &v->map);
     v->unmap.notify = hxsu;
-    wl_signal_add(&xdg_surface->events.unmap, &v->unmap);
+    wl_signal_add(&xdg_surface->surface->events.unmap, &v->unmap);
     v->destroy.notify = hxsd;
     wl_signal_add(&xdg_surface->events.destroy, &v->destroy);
     v->request_fullscreen.notify = hxtrfs;
@@ -688,7 +688,7 @@ static void si(struct lfwm_server *s) {
 
     s->display = wl_display_create();
     assert(s->display);
-    s->backend = wlr_backend_autocreate(s->display, NULL);
+    s->backend = wlr_backend_autocreate(wl_display_get_event_loop(s->display), NULL);
     assert(s->backend);
     s->renderer = wlr_renderer_autocreate(s->backend);
     assert(s->renderer);
@@ -700,8 +700,8 @@ static void si(struct lfwm_server *s) {
         s->workspaces[i].scene_tree = wlr_scene_tree_create(&s->scene->tree);
         wlr_scene_node_set_enabled(&s->workspaces[i].scene_tree->node, i == 0);
     }
-    s->output_layout = wlr_output_layout_create();
-    s->scene_layout = wlr_scene_output_layout_create(s->scene, s->output_layout);
+    s->output_layout = wlr_output_layout_create(s->display);
+    wlr_scene_attach_output_layout(s->scene, s->output_layout);
     s->xdg_shell = wlr_xdg_shell_create(s->display, 5);
     s->new_xdg_surface.notify = hnxds;
     wl_signal_add(&s->xdg_shell->events.new_surface, &s->new_xdg_surface);
@@ -730,16 +730,18 @@ static void si(struct lfwm_server *s) {
 }
 
 int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
     wlr_log_init(WLR_DEBUG, NULL);
     struct lfwm_server s = {0};
     si(&s);
     if (!wlr_backend_start(s.backend)) {
-        wlr_log(WLR_ERROR, "failed to start backend");
+        wlr_log(WLR_ERROR, "%s", "failed to start backend");
         return 1;
     }
     const char *socket = wl_display_add_socket_auto(s.display);
     if (!socket) {
-        wlr_log(WLR_ERROR, "failed to create socket");
+        wlr_log(WLR_ERROR, "%s", "failed to create socket");
         return 1;
     }
     setenv("WAYLAND_DISPLAY", socket, true);

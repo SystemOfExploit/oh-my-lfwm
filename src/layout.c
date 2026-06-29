@@ -1,4 +1,4 @@
-﻿static bool gos(struct lfwm_server *s, int *w, int *h) {
+static bool gos(struct lfwm_server *s, int *w, int *h) {
     if (wl_list_empty(&s->outputs)) return false;
     struct lfwm_output *o = wl_container_of(s->outputs.next, o, link);
     *w = o->wlr_output->width; *h = o->wlr_output->height;
@@ -30,7 +30,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
         if (!gos(s, &ow, &oh)) return;
         wlr_scene_node_set_position(&v->scene_tree->node, 0, 0);
         wlr_scene_node_set_enabled(&v->border->node, false);
-        wlr_scene_node_set_position(v->surface_node, 0, 0);
+        wlr_scene_node_set_position(&v->surface_tree->node, 0, 0);
         v->x = 0; v->y = 0; v->w = ow; v->h = oh;
         wlr_xdg_toplevel_set_size(v->xdg_surface->toplevel, ow, oh);
         return;
@@ -47,7 +47,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     wlr_scene_rect_set_size(v->border, v->w + 2*bw, v->h + 2*bw);
     wlr_scene_rect_set_color(v->border, bc);
     wlr_scene_node_set_enabled(&v->border->node, bw > 0);
-    wlr_scene_node_set_position(v->surface_node, bw, bw);
+    wlr_scene_node_set_position(&v->surface_tree->node, bw, bw);
     wlr_xdg_toplevel_set_size(v->xdg_surface->toplevel, v->w, v->h);
 }
 
