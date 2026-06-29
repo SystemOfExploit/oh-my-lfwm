@@ -16,8 +16,8 @@ print("set focus_follows_mouse true")
 print("set active_opacity 0.96")
 print("set inactive_opacity 0.88")
 print("set animations true")
-print("set animation_steps 6")
-print("set animation_delay_ms 4")
+print("set animation_steps 8")
+print("set animation_delay_ms 2")
 print("set master_ratio 0.50")
 print("set master_count 1")
 
@@ -46,6 +46,10 @@ for app_id, action in {
     "pavucontrol": "float",
     "thunar": "float",
     "firefox": "workspace 2",
+    "Yelp": "float",
+    "zenity": "float",
+    "kdialog": "float",
+    "xmessage": "float",
 }.items():
     print(f"rule {app_id} {action}")
 

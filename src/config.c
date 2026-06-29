@@ -17,8 +17,8 @@ static bool  def_sg                 = true;
 static float def_opacity_active     = 0.96f;
 static float def_opacity_inactive   = 0.88f;
 static bool  def_animations         = true;
-static int   def_animation_steps    = 6;
-static int   def_animation_delay_ms = 4;
+static int   def_animation_steps    = 8;
+static int   def_animation_delay_ms = 2;
 
 static int   dwl[10];
 static float dwmr[10];
@@ -369,6 +369,10 @@ static void lc(struct lfwm_server *s) {
         }
         aa(s, "picom --config /dev/null --backend xrender >/dev/null 2>&1");
         aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
+        ra(s, "Yelp", NULL, -1, true, false);
+        ra(s, "zenity", NULL, -1, true, false);
+        ra(s, "kdialog", NULL, -1, true, false);
+        ra(s, "xmessage", NULL, -1, true, false);
         return;
     }
 

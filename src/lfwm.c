@@ -39,6 +39,7 @@ struct lfwm_view {
     bool fullscreen;
     bool maximized;
     bool transient;
+    bool force_floating;
     int ignore_unmap;
     int x, y, w, h;
     int cx, cy, cw, ch;
@@ -111,6 +112,7 @@ struct lfwm_server {
     Atom wm_protocols;
     Atom wm_delete_window;
     Atom wm_state;
+    Atom wm_window_role;
     Atom net_active_window;
     Atom net_wm_name;
     Atom net_wm_pid;
@@ -134,6 +136,8 @@ struct lfwm_server {
     bool dragging;
     enum drag_mode drag_mode;
     struct lfwm_view *drag_view;
+    bool drag_was_floating;
+    bool drag_temp_floating;
     int drag_start_x, drag_start_y;
     int drag_view_x, drag_view_y;
     int drag_view_w, drag_view_h;
@@ -368,6 +372,59 @@ static bool is_window_type_floating(struct lfwm_server *s, Window win) {
                atom_in_list(s->net_wm_window_type_dropdown_menu, atoms, nitems) ||
                atom_in_list(s->net_wm_window_type_popup_menu, atoms, nitems);
     XFree(data);
+    return floating;
+}
+
+static bool str_contains_ci(const char *s, const char *needle) {
+    if (!s || !needle || !*needle) return false;
+    size_t nl = strlen(needle);
+    for (; *s; s++) {
+        if (strncasecmp(s, needle, nl) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool is_window_role_floating(struct lfwm_server *s, Window win) {
+    char *role = get_text_prop(s, win, s->wm_window_role);
+    bool floating = str_contains_ci(role, "dialog") ||
+                    str_contains_ci(role, "popup") ||
+                    str_contains_ci(role, "menu") ||
+                    str_contains_ci(role, "about") ||
+                    str_contains_ci(role, "preferences") ||
+                    str_contains_ci(role, "help");
+    free(role);
+    return floating;
+}
+
+static bool is_title_floating_hint(struct lfwm_server *s, Window win) {
+    char *title = get_window_title(s, win);
+    bool floating = str_contains_ci(title, "help") ||
+                    str_contains_ci(title, "about") ||
+                    str_contains_ci(title, "preferences") ||
+                    str_contains_ci(title, "properties") ||
+                    str_contains_ci(title, "settings") ||
+                    str_contains_ci(title, "справка") ||
+                    str_contains_ci(title, "Справка") ||
+                    str_contains_ci(title, "о программе") ||
+                    str_contains_ci(title, "О программе") ||
+                    str_contains_ci(title, "настройки") ||
+                    str_contains_ci(title, "Настройки") ||
+                    str_contains_ci(title, "свойства") ||
+                    str_contains_ci(title, "Свойства");
+    free(title);
+    return floating;
+}
+
+static bool is_class_floating_hint(struct lfwm_server *s, Window win) {
+    char *class_name = get_window_class(s, win);
+    bool floating = class_name &&
+        (strcasecmp(class_name, "Yelp") == 0 ||
+         strcasecmp(class_name, "yelp") == 0 ||
+         strcasecmp(class_name, "zenity") == 0 ||
+         strcasecmp(class_name, "kdialog") == 0 ||
+         strcasecmp(class_name, "xmessage") == 0);
+    free(class_name);
     return floating;
 }
 
@@ -992,11 +1049,16 @@ static void manage_window(struct lfwm_server *s, Window win) {
         v->transient_for = transient_for;
         v->transient = true;
         v->floating = true;
+        v->force_floating = true;
         if (parent) v->ws = parent->ws;
     }
-    if (is_window_type_floating(s, win)) {
+    if (is_window_type_floating(s, win) ||
+        is_window_role_floating(s, win) ||
+        is_title_floating_hint(s, win) ||
+        is_class_floating_hint(s, win)) {
         v->transient = true;
         v->floating = true;
+        v->force_floating = true;
     }
 
     apply_rule(s, v);
@@ -1062,6 +1124,7 @@ static void unmanage_window(struct lfwm_server *s, struct lfwm_view *v) {
     if (s->drag_view == v) {
         s->dragging = false;
         s->drag_view = NULL;
+        s->drag_temp_floating = false;
     }
     free(v);
     if (ws == &s->workspaces[s->current_ws]) {
@@ -1109,12 +1172,19 @@ static void begin_drag(struct lfwm_server *s, XButtonEvent *ev) {
     if (!v) v = va(s, ev->x_root, ev->y_root);
     if (!v) return;
 
-    fv(s, v);
-    if (!v->floating && !v->fullscreen) tf(s, v);
-    XRaiseWindow(s->dpy, v->win);
+    if (v->fullscreen) return;
     s->dragging = true;
     s->drag_mode = ev->button == Button3 ? DRAG_RESIZE : DRAG_MOVE;
     s->drag_view = v;
+    fv(s, v);
+    s->drag_was_floating = v->floating;
+    s->drag_temp_floating = !v->floating;
+    if (s->drag_temp_floating) {
+        v->floating = true;
+        v->x = v->cx;
+        v->y = v->cy;
+    }
+    XRaiseWindow(s->dpy, v->win);
     s->drag_start_x = ev->x_root;
     s->drag_start_y = ev->y_root;
     s->drag_view_x = v->x;
@@ -1145,10 +1215,19 @@ static void update_drag(struct lfwm_server *s, XMotionEvent *ev) {
 
 static void end_drag(struct lfwm_server *s) {
     if (!s->dragging) return;
+    struct lfwm_view *v = s->drag_view;
+    bool relayout = false;
+    if (v && s->drag_temp_floating && !s->drag_was_floating && !v->force_floating) {
+        v->floating = false;
+        relayout = true;
+    }
     s->dragging = false;
     s->drag_mode = DRAG_NONE;
     s->drag_view = NULL;
+    s->drag_was_floating = false;
+    s->drag_temp_floating = false;
     XUngrabPointer(s->dpy, CurrentTime);
+    if (relayout) aw(s);
 }
 
 static void handle_client_message(struct lfwm_server *s, XClientMessageEvent *ev) {
@@ -1202,6 +1281,7 @@ static void init_atoms(struct lfwm_server *s) {
     s->wm_protocols = XInternAtom(s->dpy, "WM_PROTOCOLS", False);
     s->wm_delete_window = XInternAtom(s->dpy, "WM_DELETE_WINDOW", False);
     s->wm_state = XInternAtom(s->dpy, "WM_STATE", False);
+    s->wm_window_role = XInternAtom(s->dpy, "WM_WINDOW_ROLE", False);
     s->net_active_window = XInternAtom(s->dpy, "_NET_ACTIVE_WINDOW", False);
     s->net_wm_name = XInternAtom(s->dpy, "_NET_WM_NAME", False);
     s->net_wm_pid = XInternAtom(s->dpy, "_NET_WM_PID", False);
