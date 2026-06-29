@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 name="lfwm"
@@ -19,22 +19,48 @@ need_root() {
 
 install_deps() {
     if command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf libx11 xorg-xsetroot xterm
+        pacman -S --needed --noconfirm base-devel pkgconf libx11 xorg-server xorg-xinit xorg-xsetroot xterm dunst
     elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        apt-get install -y build-essential pkg-config libx11-dev x11-xserver-utils xterm
+        apt-get install -y build-essential pkg-config libx11-dev xserver-xorg xinit x11-xserver-utils xterm dunst
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y gcc make pkgconf-pkg-config libX11-devel xsetroot xterm
+        dnf install -y gcc make pkgconf-pkg-config libX11-devel xorg-x11-server-Xorg xorg-x11-xinit xsetroot xterm dunst
     elif command -v zypper >/dev/null 2>&1; then
-        zypper install -y gcc make pkg-config libX11-devel xsetroot xterm
+        zypper install -y gcc make pkg-config libX11-devel xorg-x11-server xinit xsetroot xterm dunst
     elif command -v apk >/dev/null 2>&1; then
-        apk add build-base pkgconf libx11-dev xsetroot xterm
+        apk add build-base pkgconf libx11-dev xorg-server xinit xsetroot xterm dunst
     elif command -v xbps-install >/dev/null 2>&1; then
-        xbps-install -Sy gcc make pkg-config libX11-devel xsetroot xterm
+        xbps-install -Sy gcc make pkg-config libX11-devel xorg-server xinit xsetroot xterm dunst
     elif command -v emerge >/dev/null 2>&1; then
-        emerge --ask=n dev-build/pkgconf x11-libs/libX11 x11-apps/xsetroot x11-terms/xterm
+        emerge --ask=n dev-build/pkgconf x11-libs/libX11 x11-base/xorg-server x11-apps/xinit x11-apps/xsetroot x11-terms/xterm x11-misc/dunst
     else
-        warn "Unknown package manager. Install gcc, make, pkg-config, libX11 development headers and xsetroot manually."
+        warn "Unknown package manager. Install gcc, make, pkg-config, libX11 development headers, Xorg, xinit and xsetroot manually."
+    fi
+}
+
+schedule_reboot() {
+    [ "${LFWM_REBOOT:-1}" = "1" ] || {
+        warn "Skipping reboot because LFWM_REBOOT is not 1"
+        return 0
+    }
+
+    command -v systemctl >/dev/null 2>&1 || command -v reboot >/dev/null 2>&1 || {
+        warn "No reboot command found; reboot manually before starting the new session"
+        return 0
+    }
+
+    warn "Install complete. System will reboot in 5 seconds. Press Ctrl+C now to cancel."
+    trap 'printf "\n"; warn "Reboot cancelled"; exit 0' INT
+    for sec in 5 4 3 2 1; do
+        printf 'Rebooting in %s...\r' "$sec"
+        sleep 1
+    done
+    printf '\n'
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reboot
+    else
+        reboot
     fi
 }
 
@@ -58,6 +84,7 @@ main() {
     make PREFIX="$prefix" install
     info "Installed /usr/share/xsessions/lfwm.desktop"
     info "System config installed to /etc/lfwm; user config can live in ~/.config/lfwm"
+    schedule_reboot
 }
 
 main "$@"

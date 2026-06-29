@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+﻿#define _GNU_SOURCE
 
 #include <errno.h>
 #include <signal.h>
@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 #include <X11/Xutil.h>
 
 #include "lfwm_config.h"
@@ -432,24 +433,23 @@ static void swap_with_neighbor(struct lfwm_server *s, bool next) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     struct lfwm_view *v = ws->focused;
     if (!v) return;
+
     struct lfwm_view *n = next ? v->next : v->prev;
     if (!n) return;
 
-    Window tmp = v->win;
-    bool tmapped = v->mapped, tfloating = v->floating, tfullscreen = v->fullscreen, tmax = v->maximized;
-    int tx = v->x, ty = v->y, tw = v->w, th = v->h;
-    int tsx = v->sv_x, tsy = v->sv_y, tsw = v->sv_w, tsh = v->sv_h;
+    struct lfwm_view *a = next ? v : n;
+    struct lfwm_view *b = next ? n : v;
+    struct lfwm_view *before = a->prev;
+    struct lfwm_view *after = b->next;
 
-    v->win = n->win; v->mapped = n->mapped; v->floating = n->floating;
-    v->fullscreen = n->fullscreen; v->maximized = n->maximized;
-    v->x = n->x; v->y = n->y; v->w = n->w; v->h = n->h;
-    v->sv_x = n->sv_x; v->sv_y = n->sv_y; v->sv_w = n->sv_w; v->sv_h = n->sv_h;
+    if (before) before->next = b; else ws->head = b;
+    b->prev = before;
+    b->next = a;
+    a->prev = b;
+    a->next = after;
+    if (after) after->prev = a; else ws->tail = a;
 
-    n->win = tmp; n->mapped = tmapped; n->floating = tfloating;
-    n->fullscreen = tfullscreen; n->maximized = tmax;
-    n->x = tx; n->y = ty; n->w = tw; n->h = th;
-    n->sv_x = tsx; n->sv_y = tsy; n->sv_w = tsw; n->sv_h = tsh;
-    ws->focused = n;
+    ws->focused = v;
     aw(s);
 }
 
@@ -674,7 +674,7 @@ static void configure_window(struct lfwm_server *s, XConfigureRequestEvent *ev) 
 }
 
 static void handle_key(struct lfwm_server *s, XKeyEvent *ev) {
-    KeySym sym = XKeycodeToKeysym(s->dpy, (KeyCode)ev->keycode, 0);
+    KeySym sym = XkbKeycodeToKeysym(s->dpy, (KeyCode)ev->keycode, 0, 0);
     unsigned int mods = clean_mods(ev->state);
     int best = -1;
     unsigned int best_mods = 0;
