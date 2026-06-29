@@ -287,7 +287,6 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod, k, LFW_WS_SWITCH, i, NULL);
             ba(s, def_mod | ShiftMask, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
-        aa(s, "picom --corner-radius 10 --backend xrender --daemon || true");
         aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
         return;
     }

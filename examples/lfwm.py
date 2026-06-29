@@ -43,6 +43,5 @@ for app_id, action in {
 }.items():
     print(f"rule {app_id} {action}")
 
-print("exec picom --corner-radius 10 --backend xrender --daemon || true")
 print("exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'")
 print("exec dunst")
