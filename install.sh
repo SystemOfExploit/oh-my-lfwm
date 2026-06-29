@@ -19,22 +19,22 @@ need_root() {
 
 install_deps() {
     if command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf libx11 xorg-server xorg-xinit xorg-xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        pacman -S --needed --noconfirm base-devel pkgconf libx11 libxinerama xorg-server xorg-xinit xorg-xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
-        apt-get install -y build-essential pkg-config libx11-dev xserver-xorg xinit x11-xserver-utils xterm kitty firefox-esr thunar pavucontrol feh dunst picom
+        apt-get install -y build-essential pkg-config libx11-dev libxinerama-dev xserver-xorg xinit x11-xserver-utils xterm kitty firefox-esr thunar pavucontrol feh dunst picom
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y gcc make pkgconf-pkg-config libX11-devel xorg-x11-server-Xorg xorg-x11-xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        dnf install -y gcc make pkgconf-pkg-config libX11-devel libXinerama-devel xorg-x11-server-Xorg xorg-x11-xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v zypper >/dev/null 2>&1; then
-        zypper install -y gcc make pkg-config libX11-devel xorg-x11-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        zypper install -y gcc make pkg-config libX11-devel libXinerama-devel xorg-x11-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v apk >/dev/null 2>&1; then
-        apk add build-base pkgconf libx11-dev xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        apk add build-base pkgconf libx11-dev libxinerama-dev xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v xbps-install >/dev/null 2>&1; then
-        xbps-install -Sy gcc make pkg-config libX11-devel xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        xbps-install -Sy gcc make pkg-config libX11-devel libXinerama-devel xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v emerge >/dev/null 2>&1; then
-        emerge --ask=n dev-build/pkgconf x11-libs/libX11 x11-base/xorg-server x11-apps/xinit x11-apps/xsetroot x11-terms/xterm x11-terms/kitty www-client/firefox xfce-base/thunar media-sound/pavucontrol media-gfx/feh x11-misc/dunst x11-misc/picom
+        emerge --ask=n dev-build/pkgconf x11-libs/libX11 x11-libs/libXinerama x11-base/xorg-server x11-apps/xinit x11-apps/xsetroot x11-terms/xterm x11-terms/kitty www-client/firefox xfce-base/thunar media-sound/pavucontrol media-gfx/feh x11-misc/dunst x11-misc/picom
     else
-        warn "Unknown package manager. Install gcc, make, pkg-config, libX11 development headers, Xorg, xinit and xsetroot, feh, kitty, firefox/firefox-esr, thunar, pavucontrol and picom manually."
+        warn "Unknown package manager. Install gcc, make, pkg-config, libX11/libXinerama development headers, Xorg, xinit and xsetroot, feh, kitty, firefox/firefox-esr, thunar, pavucontrol and picom manually."
     fi
 }
 

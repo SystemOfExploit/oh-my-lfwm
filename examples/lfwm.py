@@ -10,6 +10,8 @@ print("set smart_borders false")
 print("set smart_gaps true")
 print("set modifier SUPER")
 print("set drag_modifier SUPER")
+print("set edge_resize true")
+print("set edge_resize_margin 16")
 print("set master_position left")
 print("set default_layout dwindle")
 print("set focus_follows_mouse true")
@@ -33,6 +35,7 @@ for line in [
     "bind SUPER Left workspace_prev",
     "bind SUPER Space layout_next",
     "bind SUPER r reload",
+    "bind SUPER x float",
     "bind SUPER Escape quit",
 ]:
     print(line)

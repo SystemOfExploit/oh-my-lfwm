@@ -13,9 +13,16 @@ SHARE_DIR ?= /usr/share/lfwm
 WALLPAPER_SRC := wallpaper/gruvbox_wallpaper.png
 
 PKGS := x11
+HAVE_XINERAMA := $(shell $(PKG_CONFIG) --exists xinerama 2>/dev/null && echo yes)
+ifeq ($(HAVE_XINERAMA),yes)
+PKGS += xinerama
+endif
 
 CFLAGS ?= -O2 -pipe
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Iinclude -DVERSION=\"$(VERSION)\"
+ifeq ($(HAVE_XINERAMA),yes)
+CFLAGS += -DLFW_WITH_XINERAMA
+endif
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS) 2>/dev/null)
 LDFLAGS += -Wl,--as-needed
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)

@@ -3,14 +3,16 @@ static int   def_bw_inactive        = 2;
 static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
 static int   def_bar_height         = 26;
-static unsigned long def_ba         = 0x5292e2;
-static unsigned long def_bi         = 0x3a3a47;
+static unsigned long def_ba         = 0xd79921;
+static unsigned long def_bi         = 0x504945;
 static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
 static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
 static int   def_mp                 = 0;
 static unsigned int def_mod         = Mod4Mask;
 static unsigned int def_drag        = Mod4Mask;
+static bool  def_edge_resize        = true;
+static int   def_edge_resize_margin = 16;
 static bool  def_ffm                = true;
 static bool  def_sb                 = false;
 static bool  def_sg                 = true;
@@ -190,6 +192,12 @@ static void pcl(struct lfwm_server *s, const char *line) {
         }
         else if (strcmp(k, "modifier") == 0) def_mod = pm(v);
         else if (strcmp(k, "drag_modifier") == 0) def_drag = pm(v);
+        else if (strcmp(k, "edge_resize") == 0) def_edge_resize = pb(v);
+        else if (strcmp(k, "edge_resize_margin") == 0) {
+            def_edge_resize_margin = atoi(v);
+            if (def_edge_resize_margin < 4) def_edge_resize_margin = 4;
+            if (def_edge_resize_margin > 64) def_edge_resize_margin = 64;
+        }
         else if (strcmp(k, "default_layout") == 0) def_layout = pl(v);
         else if (strcmp(k, "master_ratio") == 0) def_mr = atof(v);
         else if (strcmp(k, "master_count") == 0) def_mc = atoi(v);
@@ -356,6 +364,7 @@ static void lc(struct lfwm_server *s) {
         ba(s, def_mod, XK_space, LFW_LAYOUT_NEXT, 0, NULL);
         ba(s, def_mod, XK_Escape, LFW_QUIT, 0, NULL);
         ba(s, def_mod, XK_r, LFW_RELOAD, 0, NULL);
+        ba(s, def_mod, XK_x, LFW_TOGGLE_FLOAT, 0, NULL);
         ba(s, def_mod | ShiftMask, XK_h, LFW_RESIZE_DEC, 20, NULL);
         ba(s, def_mod | ShiftMask, XK_l, LFW_RESIZE_INC, 20, NULL);
         ba(s, def_mod | ShiftMask, XK_j, LFW_SWAP_NEXT, 0, NULL);
