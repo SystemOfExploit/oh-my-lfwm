@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 
 print("set border_width 2")
 print("set border_active #528AE0")
@@ -17,7 +17,7 @@ print("set master_count 1")
 for ws, layout in {1: "monocle", 2: "grid", 3: "master_stack", 4: "horiz"}.items():
     print(f"ws {ws} layout {layout}")
 
-for key, cmd in {"t": "kitty", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
+for key, cmd in {"t": "xterm", "b": "firefox", "v": "pavucontrol", "e": "thunar"}.items():
     print(f"bind SUPER {key} exec {cmd}")
 
 for line in [
@@ -42,5 +42,5 @@ for app_id, action in {
 }.items():
     print(f"rule {app_id} {action}")
 
-print("exec xsetroot -solid '#1d2021'")
+print("exec feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'")
 print("exec dunst")

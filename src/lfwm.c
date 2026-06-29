@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <X11/Xatom.h>
+#include <X11/cursorfont.h>
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 #include <X11/Xutil.h>
@@ -274,6 +275,34 @@ static void apply_rule(struct lfwm_server *s, struct lfwm_view *v) {
 
 static unsigned int clean_mods(unsigned int state) {
     return state & ~(LockMask | Mod2Mask);
+}
+
+static bool binding_matches_key(struct lfwm_server *s, const struct lfwm_binding *b, XKeyEvent *ev) {
+    if ((clean_mods(ev->state) & b->mods) != b->mods)
+        return false;
+
+    KeyCode bound = XKeysymToKeycode(s->dpy, b->sym);
+    if (bound && bound == ev->keycode)
+        return true;
+
+    KeySym current = XkbKeycodeToKeysym(s->dpy, (KeyCode)ev->keycode, 0, 0);
+    return current == b->sym;
+}
+
+static void setup_root_appearance(struct lfwm_server *s) {
+    Colormap cmap = DefaultColormap(s->dpy, s->screen);
+    XColor color, exact;
+    unsigned long bg = BlackPixel(s->dpy, s->screen);
+
+    if (XAllocNamedColor(s->dpy, cmap, "#666666", &color, &exact))
+        bg = color.pixel;
+
+    XSetWindowBackground(s->dpy, s->root, bg);
+    XClearWindow(s->dpy, s->root);
+
+    Cursor cursor = XCreateFontCursor(s->dpy, XC_left_ptr);
+    if (cursor)
+        XDefineCursor(s->dpy, s->root, cursor);
 }
 
 static void grab_buttons_for_window(struct lfwm_server *s, Window win) {
@@ -674,16 +703,12 @@ static void configure_window(struct lfwm_server *s, XConfigureRequestEvent *ev) 
 }
 
 static void handle_key(struct lfwm_server *s, XKeyEvent *ev) {
-    KeySym sym = XkbKeycodeToKeysym(s->dpy, (KeyCode)ev->keycode, 0, 0);
-    unsigned int mods = clean_mods(ev->state);
     int best = -1;
     unsigned int best_mods = 0;
     for (int i = 0; i < s->bc; i++) {
-        if (sym == s->bindings[i].sym && (mods & s->bindings[i].mods) == s->bindings[i].mods) {
-            if (s->bindings[i].mods >= best_mods) {
-                best = i;
-                best_mods = s->bindings[i].mods;
-            }
+        if (binding_matches_key(s, &s->bindings[i], ev) && s->bindings[i].mods >= best_mods) {
+            best = i;
+            best_mods = s->bindings[i].mods;
         }
     }
     if (best >= 0) ha(s, &s->bindings[best]);
@@ -841,6 +866,8 @@ static void init_server(struct lfwm_server *s) {
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     apply_workspace_defaults(s);
+
+    setup_root_appearance(s);
 
     XSetErrorHandler(startup_xerror);
     XSelectInput(s->dpy, s->root,

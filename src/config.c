@@ -1,4 +1,4 @@
-static int   def_bw_active          = 3;
+﻿static int   def_bw_active          = 3;
 static int   def_bw_inactive        = 2;
 static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
@@ -268,6 +268,7 @@ static void lc(struct lfwm_server *s) {
     if (!f) {
         fprintf(stderr, "lfwm: no config found, using defaults\n");
         ba(s, def_mod, XK_Return, LFW_SPAWN, 0, "xterm");
+        ba(s, def_mod, XK_t, LFW_SPAWN, 0, "xterm");
         ba(s, def_mod, XK_b, LFW_SPAWN, 0, "firefox");
         ba(s, def_mod, XK_q, LFW_CLOSE, 0, NULL);
         ba(s, def_mod, XK_Right, LFW_WS_NEXT, 0, NULL);
@@ -286,7 +287,7 @@ static void lc(struct lfwm_server *s) {
             ba(s, def_mod, k, LFW_WS_SWITCH, i, NULL);
             ba(s, def_mod | ShiftMask, k, LFW_WS_MOVE_AND_SWITCH, i, NULL);
         }
-        aa(s, "xsetroot -solid '#1d2021'");
+        aa(s, "feh --bg-fill /usr/share/lfwm/wallpapers/gruvbox_wallpaper.png || xsetroot -solid '#666666'");
         return;
     }
 
