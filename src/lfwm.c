@@ -135,6 +135,8 @@ struct lfwm_server {
     bool bar_show_layout;
     bool bar_show_status;
     char bar_status_text[128];
+    char bar_modules[128];
+    char bar_datetime_format[64];
     unsigned int modifier;
     unsigned int drag_mod;
     bool edge_resize;
@@ -1029,7 +1031,97 @@ static int gpu_percent(void) {
     return -1;
 }
 
+static int cpu_temp_c(void) {
+    const char *thermal[] = {"/sys/class/thermal/thermal_zone0/temp",
+                             "/sys/class/thermal/thermal_zone1/temp", NULL};
+    for (int i = 0; thermal[i]; i++) {
+        int v;
+        if (read_int_file(thermal[i], &v)) {
+            if (v > 1000) v /= 1000;
+            if (v > 0 && v < 130) return v;
+        }
+    }
+
+    DIR *dir = opendir("/sys/class/hwmon");
+    if (!dir) return -1;
+    struct dirent *de;
+    char path[512];
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        for (int i = 1; i <= 8; i++) {
+            snprintf(path, sizeof(path), "/sys/class/hwmon/%s/temp%d_input", de->d_name, i);
+            int v;
+            if (read_int_file(path, &v)) {
+                closedir(dir);
+                if (v > 1000) v /= 1000;
+                return v > 0 && v < 130 ? v : -1;
+            }
+        }
+    }
+    closedir(dir);
+    return -1;
+}
+
+static void append_status_part(char *dst, size_t dst_size, const char *part) {
+    if (!dst_size || !part || !*part) return;
+    size_t len = strlen(dst);
+    if (len && len + 2 < dst_size) {
+        dst[len++] = ' ';
+        dst[len++] = ' ';
+        dst[len] = 0;
+    }
+    strncat(dst, part, dst_size - strlen(dst) - 1);
+}
+
+static void build_bar_status(struct lfwm_server *s, struct lfwm_workspace *ws,
+                             char *status, size_t status_size) {
+    status[0] = 0;
+    char modules[sizeof(s->bar_modules)];
+    strncpy(modules, s->bar_modules, sizeof(modules) - 1);
+    modules[sizeof(modules) - 1] = 0;
+
+    int cpu = -2, ram = -2, gpu = -2, temp = -2;
+    char *save = NULL;
+    for (char *tok = strtok_r(modules, " ,+|", &save); tok; tok = strtok_r(NULL, " ,+|", &save)) {
+        char part[160] = {0};
+        if (strcasecmp(tok, "layout") == 0) {
+            if (s->bar_show_layout)
+                snprintf(part, sizeof(part), "%s", layout_label(ws->layout));
+        } else if (strcasecmp(tok, "cpu") == 0) {
+            if (cpu == -2) cpu = cpu_percent(s);
+            if (cpu >= 0) snprintf(part, sizeof(part), "CPU: %d%%", cpu);
+            else snprintf(part, sizeof(part), "CPU: N/A");
+        } else if (strcasecmp(tok, "ram") == 0 || strcasecmp(tok, "mem") == 0) {
+            if (ram == -2) ram = ram_percent();
+            if (ram >= 0) snprintf(part, sizeof(part), "RAM: %d%%", ram);
+            else snprintf(part, sizeof(part), "RAM: N/A");
+        } else if (strcasecmp(tok, "gpu") == 0) {
+            if (gpu == -2) gpu = gpu_percent();
+            if (gpu >= 0) snprintf(part, sizeof(part), "GPU: %d%%", gpu);
+            else snprintf(part, sizeof(part), "GPU: N/A");
+        } else if (strcasecmp(tok, "temp") == 0 || strcasecmp(tok, "cpu_temp") == 0 ||
+                   strcasecmp(tok, "temperature") == 0) {
+            if (temp == -2) temp = cpu_temp_c();
+            if (temp >= 0) snprintf(part, sizeof(part), "TEMP: %dC", temp);
+            else snprintf(part, sizeof(part), "TEMP: N/A");
+        } else if (strcasecmp(tok, "datetime") == 0 || strcasecmp(tok, "date") == 0 ||
+                   strcasecmp(tok, "time") == 0) {
+            time_t now = time(NULL);
+            struct tm tmv;
+            localtime_r(&now, &tmv);
+            if (!strftime(part, sizeof(part), s->bar_datetime_format, &tmv))
+                snprintf(part, sizeof(part), "TIME: N/A");
+        } else if (strcasecmp(tok, "text") == 0) {
+            snprintf(part, sizeof(part), "%s", s->bar_status_text);
+        }
+        append_status_part(status, status_size, part);
+    }
+}
 static void draw_bar(struct lfwm_server *s) {
+    if (s->locked) {
+        if (s->bar) XUnmapWindow(s->dpy, s->bar);
+        return;
+    }
     if (!s->bar_enabled) {
         if (s->bar)
             XUnmapWindow(s->dpy, s->bar);
@@ -1077,29 +1169,14 @@ static void draw_bar(struct lfwm_server *s) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     char status[512];
     if (s->bar_show_status) {
-        int cpu = cpu_percent(s);
-        int ram = ram_percent();
-        int gpu = gpu_percent();
-        char cpu_s[16], ram_s[16], gpu_s[16];
-        if (cpu >= 0) snprintf(cpu_s, sizeof(cpu_s), "%d%%", cpu);
-        else snprintf(cpu_s, sizeof(cpu_s), "N/A");
-        if (ram >= 0) snprintf(ram_s, sizeof(ram_s), "%d%%", ram);
-        else snprintf(ram_s, sizeof(ram_s), "N/A");
-        if (gpu >= 0) snprintf(gpu_s, sizeof(gpu_s), "%d%%", gpu);
-        else snprintf(gpu_s, sizeof(gpu_s), "N/A");
-
-        if (s->bar_show_layout) {
-            snprintf(status, sizeof(status), "%s  CPU: %s  RAM: %s  GPU: %s",
-                     layout_label(ws->layout), cpu_s, ram_s, gpu_s);
-        } else {
-            snprintf(status, sizeof(status), "CPU: %s  RAM: %s  GPU: %s",
-                     cpu_s, ram_s, gpu_s);
-        }
+        build_bar_status(s, ws, status, sizeof(status));
         int len = (int)strlen(status);
-        int tx = sw - len * 7 - s->bar_padding_x;
-        if (tx < x + s->bar_padding_x) tx = x + s->bar_padding_x;
-        XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
-        XDrawString(s->dpy, s->bar, s->bar_gc, tx, baseline, status, len);
+        if (len > 0) {
+            int tx = sw - len * 7 - s->bar_padding_x;
+            if (tx < x + s->bar_padding_x) tx = x + s->bar_padding_x;
+            XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
+            XDrawString(s->dpy, s->bar, s->bar_gc, tx, baseline, status, len);
+        }
     }
     XRaiseWindow(s->dpy, s->bar);
     XMapRaised(s->dpy, s->bar);
@@ -1291,12 +1368,16 @@ static void hide_locker(struct lfwm_server *s) {
     s->lock_failed = false;
     memset(s->lock_password, 0, sizeof(s->lock_password));
     s->lock_password_len = 0;
+    if (s->bar_enabled && s->bar)
+        XMapRaised(s->dpy, s->bar);
 }
 
 static void show_locker(struct lfwm_server *s) {
     int sw = DisplayWidth(s->dpy, s->screen);
     int sh = DisplayHeight(s->dpy, s->screen);
     hide_power_menu(s);
+    if (s->bar)
+        XUnmapWindow(s->dpy, s->bar);
     if (!s->locker) {
         XSetWindowAttributes wa = {0};
         wa.override_redirect = True;
@@ -1730,6 +1811,18 @@ static void swap_with_neighbor(struct lfwm_server *s, bool next) {
     aw(s);
 }
 
+static void toggle_split(struct lfwm_server *s) {
+    struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
+    struct lfwm_view *v = ws->focused;
+    if (!v || v->floating || v->fullscreen || !v->node || !v->node->parent)
+        return;
+
+    v->node->parent->vertical = !v->node->parent->vertical;
+    if (ws->layout != LFW_LAYOUT_DWINDLE)
+        ws->layout = LFW_LAYOUT_DWINDLE;
+    aw(s);
+}
+
 static void reset_workspace_defaults(struct lfwm_server *s) {
     for (int i = 0; i < 10; i++) {
         dwl[i] = -1; dwmr[i] = -1; dwmc[i] = -1; dwmp[i] = -1;
@@ -1760,6 +1853,10 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     s->bar_show_status = def_bar_show_status;
     strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
     s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
+    strncpy(s->bar_modules, def_bar_modules, sizeof(s->bar_modules) - 1);
+    s->bar_modules[sizeof(s->bar_modules) - 1] = 0;
+    strncpy(s->bar_datetime_format, def_bar_datetime_format, sizeof(s->bar_datetime_format) - 1);
+    s->bar_datetime_format[sizeof(s->bar_datetime_format) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1816,6 +1913,10 @@ static void reload_config(struct lfwm_server *s) {
     s->bar_show_status = def_bar_show_status;
     strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
     s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
+    strncpy(s->bar_modules, def_bar_modules, sizeof(s->bar_modules) - 1);
+    s->bar_modules[sizeof(s->bar_modules) - 1] = 0;
+    strncpy(s->bar_datetime_format, def_bar_datetime_format, sizeof(s->bar_datetime_format) - 1);
+    s->bar_datetime_format[sizeof(s->bar_datetime_format) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1927,6 +2028,7 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
             ag(s, ws->focused);
         }
         break;
+    case LFW_TOGGLE_SPLIT: toggle_split(s); break;
     case LFW_SWAP_NEXT: swap_with_neighbor(s, true); break;
     case LFW_SWAP_PREV: swap_with_neighbor(s, false); break;
     case LFW_POWER_MENU: show_power_menu(s); break;
@@ -2470,6 +2572,10 @@ static void init_server(struct lfwm_server *s) {
     s->bar_show_status = def_bar_show_status;
     strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
     s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
+    strncpy(s->bar_modules, def_bar_modules, sizeof(s->bar_modules) - 1);
+    s->bar_modules[sizeof(s->bar_modules) - 1] = 0;
+    strncpy(s->bar_datetime_format, def_bar_datetime_format, sizeof(s->bar_datetime_format) - 1);
+    s->bar_datetime_format[sizeof(s->bar_datetime_format) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -2523,6 +2629,8 @@ static void maybe_reload_config(struct lfwm_server *s) {
 }
 
 static void maybe_refresh_bar(struct lfwm_server *s) {
+    if (s->locked)
+        return;
     time_t now = time(NULL);
     if (now == s->last_bar_refresh)
         return;
@@ -2535,11 +2643,19 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
     if (s->locked) {
         if (ev->type == KeyPress) {
             locker_handle_key(s, &ev->xkey);
+        } else if (ev->type == MapRequest) {
+            manage_window(s, ev->xmaprequest.window);
+        } else if (ev->type == ConfigureRequest) {
+            configure_window(s, &ev->xconfigurerequest);
+        } else if (ev->type == DestroyNotify) {
+            unmanage_window(s, find_view(s, ev->xdestroywindow.window));
         } else if (ev->type == Expose && ev->xexpose.window == s->locker) {
             draw_locker(s);
         } else if (ev->type == ConfigureNotify && ev->xconfigure.window == s->root) {
+            aw(s);
             draw_locker(s);
-        } else if (s->locker) {
+        }
+        if (s->locker) {
             XRaiseWindow(s->dpy, s->locker);
             XSetInputFocus(s->dpy, s->locker, RevertToPointerRoot, CurrentTime);
         }

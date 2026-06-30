@@ -25,6 +25,8 @@ static bool  def_bar_show_counts    = true;
 static bool  def_bar_show_layout    = true;
 static bool  def_bar_show_status    = true;
 static char  def_bar_status_text[128] = "lfwm";
+static char  def_bar_modules[128] = "layout cpu ram datetime";
+static char  def_bar_datetime_format[64] = "%Y-%m-%d %H:%M";
 static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
 static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
@@ -212,6 +214,8 @@ static enum lfwm_action pa(const char *s) {
         {"resize_inc", LFW_RESIZE_INC}, {"expand", LFW_RESIZE_INC},
         {"resize_dec", LFW_RESIZE_DEC}, {"shrink", LFW_RESIZE_DEC},
         {"center", LFW_CENTER_FLOAT},
+        {"toggle_split", LFW_TOGGLE_SPLIT}, {"togglesplit", LFW_TOGGLE_SPLIT},
+        {"split_toggle", LFW_TOGGLE_SPLIT}, {"split", LFW_TOGGLE_SPLIT},
         {"swap_next", LFW_SWAP_NEXT}, {"swap_prev", LFW_SWAP_PREV},
         {"power_menu", LFW_POWER_MENU}, {"powermenu", LFW_POWER_MENU},
         {"reload", LFW_RELOAD}, {"quit", LFW_QUIT}, {"exit", LFW_QUIT},
@@ -328,6 +332,10 @@ static void pcl(struct lfwm_server *s, const char *line) {
             def_bar_show_status = pb(v);
         else if (strcmp(k, "bar_status") == 0 || strcmp(k, "bar_status_text") == 0)
             conf_copy_words(def_bar_status_text, sizeof(def_bar_status_text), av, 2, ac);
+        else if (strcmp(k, "bar_modules") == 0 || strcmp(k, "bar_status_modules") == 0)
+            conf_copy_words(def_bar_modules, sizeof(def_bar_modules), av, 2, ac);
+        else if (strcmp(k, "bar_datetime_format") == 0 || strcmp(k, "bar_time_format") == 0)
+            conf_copy_words(def_bar_datetime_format, sizeof(def_bar_datetime_format), av, 2, ac);
         else if (strcmp(k, "modifier") == 0) def_mod = pm(v);
         else if (strcmp(k, "drag_modifier") == 0) def_drag = pm(v);
         else if (strcmp(k, "edge_resize") == 0) def_edge_resize = pb(v);
@@ -531,6 +539,8 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set bar_show_layout true\n"
         "set bar_show_status true\n"
         "set bar_status lfwm\n"
+        "set bar_modules layout cpu ram datetime\n"
+        "set bar_datetime_format %Y-%m-%d %H:%M\n"
         "set gap_in 8\n"
         "set gap_out 12\n"
         "set bar_height 28\n"
@@ -566,6 +576,7 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "bind SUPER Right workspace_next\n"
         "bind SUPER Left workspace_prev\n"
         "bind SUPER Space layout_next\n"
+        "bind SUPER p toggle_split\n"
         "bind SUPER r reload\n"
         "bind SUPER x toggle_float\n"
         "bind SUPER m power_menu\n"
@@ -686,6 +697,7 @@ static void lc(struct lfwm_server *s) {
         ba(s, def_mod, XK_Right, LFW_WS_NEXT, 0, NULL);
         ba(s, def_mod, XK_Left, LFW_WS_PREV, 0, NULL);
         ba(s, def_mod, XK_space, LFW_LAYOUT_NEXT, 0, NULL);
+        ba(s, def_mod, XK_p, LFW_TOGGLE_SPLIT, 0, NULL);
         ba(s, def_mod, XK_Escape, LFW_QUIT, 0, NULL);
         ba(s, def_mod, XK_r, LFW_RELOAD, 0, NULL);
         ba(s, def_mod, XK_x, LFW_TOGGLE_FLOAT, 0, NULL);

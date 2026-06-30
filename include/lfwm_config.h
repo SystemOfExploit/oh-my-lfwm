@@ -48,6 +48,7 @@ enum lfwm_action {
     LFW_RESIZE_INC,
     LFW_RESIZE_DEC,
     LFW_CENTER_FLOAT,
+    LFW_TOGGLE_SPLIT,
     LFW_SWAP_NEXT,
     LFW_SWAP_PREV,
     LFW_SWAP_MASTER,
