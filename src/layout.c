@@ -461,7 +461,13 @@ static void aw(struct lfwm_server *s) {
     if (outh < 1) outh = 1;
 
     int n = ct(ws);
-    if (n <= 1 && s->sg) gi = 0;
+    if (n <= 1 && s->sg) {
+        gi = 0;
+    } else {
+        int seam_gap = s->bw_active + s->bw_inactive + 1;
+        if (gi < seam_gap)
+            gi = seam_gap;
+    }
     if (n > 0) {
         switch (ws->layout) {
         case LFW_LAYOUT_MASTER_STACK: ams(s, ws, outw, outh, gi, go, n); break;
