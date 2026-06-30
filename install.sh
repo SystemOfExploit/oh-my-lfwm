@@ -13,13 +13,21 @@ info() { printf '%s[*]%s %s\n' "$green" "$reset" "$1"; }
 warn() { printf '%s[!]%s %s\n' "$yellow" "$reset" "$1"; }
 fail() { printf '%s[x]%s %s\n' "$red" "$reset" "$1"; exit 1; }
 
+info "                                               
+▄▄▄       ▄▄▄▄▄▄▄ ▄▄▄▄  ▄▄▄  ▄▄▄▄ ▄▄▄      ▄▄▄ 
+███      ███▀▀▀▀▀ ▀███  ███  ███▀ ████▄  ▄████ 
+███      ███▄▄     ███  ███  ███  ███▀████▀███ 
+███      ███▀▀     ███▄▄███▄▄███  ███  ▀▀  ███ 
+████████ ███        ▀████▀████▀   ███      ███                                                                                                                                                                                                                                                                                                                                                                   
+"
+
 need_root() {
     [ "$(id -u)" -eq 0 ] || fail "Run as root: sudo ./install.sh"
 }
 
 install_deps() {
     if command -v pacman >/dev/null 2>&1; then
-        pacman -S --needed --noconfirm base-devel pkgconf libx11 libxinerama xorg-server xorg-xinit xorg-xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
+        pacman -Syu --needed --noconfirm base-devel pkgconf libx11 libxinerama xorg-server xorg-xinit xorg-xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v apt-get >/dev/null 2>&1; then
         apt-get update
         apt-get install -y build-essential pkg-config libx11-dev libxinerama-dev xserver-xorg xinit x11-xserver-utils xterm kitty firefox-esr thunar pavucontrol feh dunst picom
