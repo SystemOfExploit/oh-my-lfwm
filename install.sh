@@ -22,7 +22,7 @@ info "
 "
 
 need_root() {
-    [ "$(id -u)" -eq 0 ] || fail "Run as root: sudo ./install.sh"
+    [ "$(id -u)" -eq 0 ] || fail "Run as root: sudo or doas ./install.sh"
 }
 
 install_deps() {
