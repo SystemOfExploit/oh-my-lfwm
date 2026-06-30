@@ -1835,12 +1835,17 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         unmanage_window(s, find_view(s, ev->xdestroywindow.window));
         break;
     case UnmapNotify: {
+        if (ev->xunmap.event != s->root)
+            break;
         struct lfwm_view *v = find_view(s, ev->xunmap.window);
         if (!v) break;
         if (v->ignore_unmap > 0) {
             v->ignore_unmap--;
             break;
         }
+        if (!v->visible)
+            break;
+        v->visible = false;
         unmanage_window(s, v);
         break;
     }
