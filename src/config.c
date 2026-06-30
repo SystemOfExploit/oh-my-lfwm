@@ -42,9 +42,9 @@ static float def_opacity_active     = 0.96f;
 static float def_opacity_inactive   = 0.88f;
 static float def_opacity_drag       = 0.72f;
 static bool  def_animations         = true;
-static int   def_animation_steps    = 12;
+static int   def_animation_steps    = 10;
 static int   def_animation_delay_ms = 1;
-static int   def_animation_max_windows = 6;
+static int   def_animation_max_windows = 10;
 
 static int   dwl[10];
 static float dwmr[10];
@@ -556,9 +556,9 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set inactive_opacity 0.88\n"
         "set drag_opacity 0.72\n"
         "set animations true\n"
-        "set animation_steps 12\n"
+        "set animation_steps 10\n"
         "set animation_delay_ms 1\n"
-        "set animation_max_windows 6\n"
+        "set animation_max_windows 10\n"
         "set master_ratio 0.50\n"
         "set master_count 1\n"
         "\n"

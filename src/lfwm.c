@@ -151,6 +151,7 @@ struct lfwm_server {
     int animation_steps;
     int animation_delay_ms;
     int animation_max_windows;
+    bool suppress_animations;
     unsigned long long cpu_total_prev;
     unsigned long long cpu_idle_prev;
     bool cpu_sampled;
@@ -210,6 +211,7 @@ static void aw(struct lfwm_server *s);
 static void tf(struct lfwm_server *s, struct lfwm_view *v);
 static void tfs(struct lfwm_server *s, struct lfwm_view *v);
 static void ag(struct lfwm_server *s, struct lfwm_view *v);
+static void restack_workspace(struct lfwm_server *s, struct lfwm_workspace *ws);
 static struct lfwm_view *va(struct lfwm_server *s, int x, int y);
 static void draw_bar(struct lfwm_server *s);
 static char *get_window_class(struct lfwm_server *s, Window win);
@@ -1688,6 +1690,54 @@ static void sync_workspace_visibility(struct lfwm_server *s) {
     }
 }
 
+static int workspace_view_count(struct lfwm_workspace *ws) {
+    int n = 0;
+    for (struct lfwm_view *v = ws->head; v; v = v->next)
+        n++;
+    return n;
+}
+
+static bool workspace_switch_animation_ok(struct lfwm_server *s,
+                                          struct lfwm_workspace *old_ws,
+                                          struct lfwm_workspace *new_ws) {
+    if (!s->animations || s->animation_steps <= 1)
+        return false;
+    int total = workspace_view_count(old_ws) + workspace_view_count(new_ws);
+    return s->animation_max_windows <= 0 || total <= s->animation_max_windows;
+}
+
+static void slide_workspace(struct lfwm_server *s, int old_idx, int new_idx, int dir) {
+    struct lfwm_workspace *old_ws = &s->workspaces[old_idx];
+    struct lfwm_workspace *new_ws = &s->workspaces[new_idx];
+    if (!workspace_switch_animation_ok(s, old_ws, new_ws))
+        return;
+
+    int sw = DisplayWidth(s->dpy, s->screen);
+    if (sw <= 0)
+        return;
+
+    int steps = s->animation_steps;
+    int delay_ms = s->animation_delay_ms;
+    if (delay_ms > 3)
+        delay_ms = 3;
+
+    for (int i = 0; i <= steps; i++) {
+        int t = i * 1000 / steps;
+        int ease = 1000 - (1000 - t) * (1000 - t) / 1000;
+        int old_dx = -dir * sw * ease / 1000;
+        int new_dx = dir * sw * (1000 - ease) / 1000;
+
+        for (struct lfwm_view *v = old_ws->head; v; v = v->next)
+            if (v->visible) XMoveWindow(s->dpy, v->win, v->cx + old_dx, v->cy);
+        for (struct lfwm_view *v = new_ws->head; v; v = v->next)
+            if (v->visible) XMoveWindow(s->dpy, v->win, v->cx + new_dx, v->cy);
+
+        XFlush(s->dpy);
+        if (delay_ms > 0)
+            usleep((unsigned int)delay_ms * 1000);
+    }
+}
+
 static void fv(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
@@ -1752,18 +1802,41 @@ static void close_focused(struct lfwm_server *s) {
 
 static void wss(struct lfwm_server *s, int ws) {
     if (ws == s->current_ws || ws < 0 || ws >= 10) return;
-    struct lfwm_view *old_focus = s->workspaces[s->current_ws].focused;
-    hide_workspace(s, s->current_ws);
+    int old_ws = s->current_ws;
+
+    int dir = ws > old_ws ? 1 : -1;
+    if (old_ws == 9 && ws == 0) dir = 1;
+    else if (old_ws == 0 && ws == 9) dir = -1;
+
     s->current_ws = ws;
     long cur = ws;
     XChangeProperty(s->dpy, s->root, s->net_current_desktop, XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char *)&cur, 1);
+
     show_workspace(s, ws);
-    sync_workspace_visibility(s);
+
+    struct lfwm_workspace *new_workspace = &s->workspaces[ws];
+    struct lfwm_view *new_focus = new_workspace->focused ?
+        new_workspace->focused : new_workspace->tail;
+    if (new_focus)
+        new_workspace->focused = new_focus;
+
+    s->suppress_animations = true;
     aw(s);
-    if (s->workspaces[ws].focused) fv(s, s->workspaces[ws].focused);
-    else if (s->workspaces[ws].tail) fv(s, s->workspaces[ws].tail);
-    else if (old_focus) XSetInputFocus(s->dpy, s->root, RevertToPointerRoot, CurrentTime);
+    slide_workspace(s, old_ws, ws, dir);
+    hide_workspace(s, old_ws);
+    s->suppress_animations = false;
+
+    if (new_focus) {
+        XSetInputFocus(s->dpy, new_focus->win, RevertToPointerRoot, CurrentTime);
+        XChangeProperty(s->dpy, s->root, s->net_active_window, XA_WINDOW, 32,
+                        PropModeReplace, (unsigned char *)&new_focus->win, 1);
+        restack_workspace(s, new_workspace);
+        draw_bar(s);
+    } else {
+        XSetInputFocus(s->dpy, s->root, RevertToPointerRoot, CurrentTime);
+    }
+    XSync(s->dpy, False);
 }
 
 static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
@@ -1784,12 +1857,25 @@ static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
         return;
     }
 
-    sync_workspace_visibility(s);
     if (new_ws == &s->workspaces[s->current_ws]) {
+        if (!v->visible) {
+            XMapRaised(s->dpy, v->win);
+            v->visible = true;
+        }
         fv(s, v);
     } else if (was_current && s->workspaces[s->current_ws].tail) {
+        if (v->visible) {
+            v->ignore_unmap++;
+            XUnmapWindow(s->dpy, v->win);
+            v->visible = false;
+        }
         fv(s, s->workspaces[s->current_ws].tail);
     } else {
+        if (v->visible && new_ws != &s->workspaces[s->current_ws]) {
+            v->ignore_unmap++;
+            XUnmapWindow(s->dpy, v->win);
+            v->visible = false;
+        }
         aw(s);
         if (was_current)
             XSetInputFocus(s->dpy, s->root, RevertToPointerRoot, CurrentTime);
@@ -2244,7 +2330,6 @@ static void manage_window(struct lfwm_server *s, Window win) {
         XUnmapWindow(s->dpy, win);
         v->visible = false;
     }
-    sync_workspace_visibility(s);
     update_client_list(s);
 }
 
@@ -2828,7 +2913,7 @@ int main(void) {
         }
         maybe_reload_config(&s);
         maybe_refresh_bar(&s);
-        usleep(50000);
+        usleep(8000);
     }
 
     cleanup(&s);

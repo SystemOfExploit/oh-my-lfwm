@@ -105,7 +105,7 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v,
         h = client_h + bw * 2;
     }
 
-    bool animate = v->configured && !s->dragging && !v->fullscreen && !v->transient &&
+    bool animate = v->configured && !s->suppress_animations && !s->dragging && !v->fullscreen && !v->transient &&
                    s->animations && s->animation_steps > 1;
     if (animate && s->animation_max_windows > 0 &&
         view_count(&s->workspaces[s->current_ws], false) > s->animation_max_windows)
