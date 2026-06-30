@@ -584,12 +584,13 @@ static time_t config_file_mtime(void) {
     char path[4096], pypath[4096], dirpath[4096], child[4096];
     struct stat st;
     time_t newest = 0;
+    DIR *dir;
 
     if (conf_user_paths(path, sizeof(path), pypath, sizeof(pypath),
                         dirpath, sizeof(dirpath))) {
         if (stat(path, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
         if (stat(pypath, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
-        DIR *dir = opendir(dirpath);
+        dir = opendir(dirpath);
         if (dir) {
             struct dirent *de;
             while ((de = readdir(dir)) != NULL) {
@@ -608,17 +609,17 @@ static time_t config_file_mtime(void) {
 
     if (stat("/etc/lfwm/lfwm.conf", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
     if (stat("/etc/lfwm/lfwm.py", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
-    DIR *sys_dir = opendir("/etc/lfwm/conf.d");
-    if (sys_dir) {
+    dir = opendir("/etc/lfwm/conf.d");
+    if (dir) {
         struct dirent *de;
-        while ((de = readdir(sys_dir)) != NULL) {
+        while ((de = readdir(dir)) != NULL) {
             size_t len = strlen(de->d_name);
             if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
             if (!conf_join_path(child, sizeof(child), "/etc/lfwm/conf.d", de->d_name))
                 continue;
             if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
         }
-        closedir(sys_dir);
+        closedir(dir);
     }
     return newest;
 }
