@@ -35,6 +35,8 @@ enum resize_edge {
     RESIZE_EDGE_BOTTOM = 1 << 3,
 };
 
+#define LFW_POWER_ITEMS 5
+
 struct lfwm_server;
 struct lfwm_node;
 
@@ -152,7 +154,7 @@ struct lfwm_server {
     int pending_spawn_ws[32];
     time_t pending_spawn_until[32];
     int pending_spawn_count;
-    int power_rects[4][4];
+    int power_rects[LFW_POWER_ITEMS][4];
 
     Atom wm_protocols;
     Atom wm_delete_window;
@@ -1137,12 +1139,12 @@ static void draw_power_menu(struct lfwm_server *s) {
     XFillRectangle(s->dpy, s->power_menu, gc, 0, 0,
                    (unsigned int)ow, (unsigned int)oh);
 
-    const char *labels[] = {"ShutDown", "Reboot", "Sleep", "Logout"};
+    const char *labels[LFW_POWER_ITEMS] = {"ShutDown", "Reboot", "Sleep", "Logout", "Exit"};
     const char *title = "Power";
-    int cols = ow >= 760 ? 4 : 2;
-    int rows = cols == 4 ? 1 : 2;
+    int cols = ow >= 940 ? 5 : ow >= 620 ? 3 : 2;
+    int rows = (LFW_POWER_ITEMS + cols - 1) / cols;
     int gap = 18;
-    int tile = ow / (cols == 4 ? 7 : 4);
+    int tile = ow / (cols == 5 ? 8 : cols == 3 ? 5 : 4);
     if (tile > 160) tile = 160;
     if (tile < 96) tile = 96;
     if (tile * cols + gap * (cols - 1) > ow - 40)
@@ -1161,7 +1163,7 @@ static void draw_power_menu(struct lfwm_server *s) {
                 (ow - (int)strlen(title) * 7) / 2,
                 start_y - 34, title, (int)strlen(title));
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < LFW_POWER_ITEMS; i++) {
         int col = i % cols;
         int row = i / cols;
         int x = start_x + col * (tile + gap);
@@ -1171,7 +1173,10 @@ static void draw_power_menu(struct lfwm_server *s) {
         s->power_rects[i][2] = tile;
         s->power_rects[i][3] = tile;
 
-        unsigned long bg = i == 0 ? 0xcc241d : i == 1 ? 0xd79921 : i == 2 ? 0x458588 : 0x689d6a;
+        unsigned long bg = i == 0 ? 0xcc241d :
+                           i == 1 ? 0xd79921 :
+                           i == 2 ? 0x458588 :
+                           i == 3 ? 0x689d6a : 0x504945;
         unsigned long fg = i == 1 ? 0x282828 : 0xebdbb2;
         XSetForeground(s->dpy, gc, bg);
         XFillRectangle(s->dpy, s->power_menu, gc, x, y,
@@ -1226,7 +1231,7 @@ static bool power_menu_handle_button(struct lfwm_server *s, XButtonEvent *ev) {
     if (!s->power_menu || ev->window != s->power_menu) return false;
 
     int choice = -1;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < LFW_POWER_ITEMS; i++) {
         int *r = s->power_rects[i];
         if (ev->x >= r[0] && ev->x < r[0] + r[2] &&
             ev->y >= r[1] && ev->y < r[1] + r[3]) {
@@ -1239,7 +1244,8 @@ static bool power_menu_handle_button(struct lfwm_server *s, XButtonEvent *ev) {
     if (choice == 0) spawn_cmd("systemctl poweroff || loginctl poweroff", -1);
     else if (choice == 1) spawn_cmd("systemctl reboot || loginctl reboot", -1);
     else if (choice == 2) spawn_cmd("systemctl suspend || loginctl suspend", -1);
-    else if (choice == 3) s->running = false;
+    else if (choice == 3) spawn_cmd("loginctl lock-session || xdg-screensaver lock || light-locker-command -l || dm-tool lock || slock || i3lock || xlock", -1);
+    else if (choice == 4) s->running = false;
     return true;
 }
 
@@ -1799,8 +1805,12 @@ static void manage_window(struct lfwm_server *s, Window win) {
     apply_rule(s, v);
     ws = v->ws;
     set_window_desktop(s, v);
-    if (v->floating && !v->fullscreen)
+    if (v->floating && !v->fullscreen) {
+        int bw = view_border_width(s, v);
+        v->w += bw * 2;
+        v->h += bw * 2;
         center_floating_view(s, v, parent && parent->ws == ws ? parent : NULL);
+    }
 
     Window rr, cr;
     int rx, ry, wx, wy;
@@ -1885,10 +1895,11 @@ static void configure_window(struct lfwm_server *s, XConfigureRequestEvent *ev) 
     if (!v || v->floating || v->fullscreen) {
         XConfigureWindow(s->dpy, ev->window, (unsigned int)ev->value_mask, &wc);
         if (v) {
+            int bw = view_border_width(s, v);
             if (ev->value_mask & CWX) v->x = ev->x;
             if (ev->value_mask & CWY) v->y = ev->y;
-            if (ev->value_mask & CWWidth) v->w = ev->width;
-            if (ev->value_mask & CWHeight) v->h = ev->height;
+            if (ev->value_mask & CWWidth) v->w = ev->width + bw * 2;
+            if (ev->value_mask & CWHeight) v->h = ev->height + bw * 2;
             ag(s, v);
         }
     } else {
