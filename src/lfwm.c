@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,7 @@
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <X11/Xlib.h>
+#include <security/pam_appl.h>
 #ifdef LFW_WITH_XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif
@@ -90,6 +92,7 @@ struct lfwm_server {
     Window root;
     Window bar;
     Window power_menu;
+    Window locker;
     GC bar_gc;
     int bar_h;
     bool running;
@@ -141,6 +144,7 @@ struct lfwm_server {
     bool sg;
     float opacity_active;
     float opacity_inactive;
+    float opacity_drag;
     bool animations;
     int animation_steps;
     int animation_delay_ms;
@@ -180,6 +184,12 @@ struct lfwm_server {
     Atom net_wm_desktop;
     Atom net_number_of_desktops;
     Atom net_workarea;
+    Atom xrootpmap_id;
+
+    bool locked;
+    bool lock_failed;
+    char lock_password[256];
+    int lock_password_len;
 
     bool dragging;
     enum drag_mode drag_mode;
@@ -1126,6 +1136,239 @@ static void hide_power_menu(struct lfwm_server *s) {
     XUnmapWindow(s->dpy, s->power_menu);
 }
 
+struct pam_password {
+    const char *password;
+};
+
+static int lock_pam_conv(int num_msg, const struct pam_message **msg,
+                         struct pam_response **resp, void *data) {
+    struct pam_password *pw = data;
+    struct pam_response *out = calloc((size_t)num_msg, sizeof(*out));
+    if (!out)
+        return PAM_CONV_ERR;
+
+    for (int i = 0; i < num_msg; i++) {
+        if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF ||
+            msg[i]->msg_style == PAM_PROMPT_ECHO_ON) {
+            out[i].resp = strdup(pw && pw->password ? pw->password : "");
+            if (!out[i].resp) {
+                for (int j = 0; j < i; j++) free(out[j].resp);
+                free(out);
+                return PAM_CONV_ERR;
+            }
+        }
+    }
+    *resp = out;
+    return PAM_SUCCESS;
+}
+
+static bool lock_authenticate(struct lfwm_server *s) {
+    const char *user = getenv("USER");
+    struct passwd *pwd = getpwuid(getuid());
+    if (pwd && pwd->pw_name)
+        user = pwd->pw_name;
+    if (!user || !*user)
+        return false;
+
+    const char *services[] = {"login", "system-auth"};
+    for (size_t i = 0; i < sizeof(services) / sizeof(services[0]); i++) {
+        struct pam_password pw = {s->lock_password};
+        struct pam_conv conv = {lock_pam_conv, &pw};
+        pam_handle_t *pamh = NULL;
+        int ret = pam_start(services[i], user, &conv, &pamh);
+        if (ret == PAM_SUCCESS)
+            ret = pam_authenticate(pamh, 0);
+        if (ret == PAM_SUCCESS)
+            ret = pam_acct_mgmt(pamh, 0);
+        if (pamh)
+            pam_end(pamh, ret);
+        if (ret == PAM_SUCCESS)
+            return true;
+    }
+    return false;
+}
+
+static void draw_locker_background(struct lfwm_server *s, GC gc, int sw, int sh) {
+    bool copied = false;
+    if (s->xrootpmap_id) {
+        Atom actual;
+        int format;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        if (XGetWindowProperty(s->dpy, s->root, s->xrootpmap_id, 0, 1, False,
+                               XA_PIXMAP, &actual, &format, &nitems,
+                               &bytes_after, &data) == Success && data &&
+            actual == XA_PIXMAP && format == 32 && nitems > 0) {
+            Pixmap pm = *(Pixmap *)data;
+            XCopyArea(s->dpy, pm, s->locker, gc, 0, 0,
+                      (unsigned int)sw, (unsigned int)sh, 0, 0);
+            copied = true;
+        }
+        if (data) XFree(data);
+    }
+
+    if (!copied) {
+        XSetForeground(s->dpy, gc, s->root_bg);
+        XFillRectangle(s->dpy, s->locker, gc, 0, 0,
+                       (unsigned int)sw, (unsigned int)sh);
+    }
+
+    XSetForeground(s->dpy, gc, 0x111111);
+    for (int y = 0; y < sh; y += 2)
+        XDrawLine(s->dpy, s->locker, gc, 0, y, sw, y);
+}
+
+static void draw_locker(struct lfwm_server *s) {
+    if (!s->locker) return;
+
+    int sw = DisplayWidth(s->dpy, s->screen);
+    int sh = DisplayHeight(s->dpy, s->screen);
+    GC gc = s->bar_gc ? s->bar_gc : DefaultGC(s->dpy, s->screen);
+    XMoveResizeWindow(s->dpy, s->locker, 0, 0, (unsigned int)sw, (unsigned int)sh);
+    draw_locker_background(s, gc, sw, sh);
+
+    int panel_w = sw < 520 ? sw - 48 : 420;
+    if (panel_w < 260) panel_w = 260;
+    int panel_h = 172;
+    int px = (sw - panel_w) / 2;
+    int py = (sh - panel_h) / 2;
+
+    XSetForeground(s->dpy, gc, 0x282828);
+    XFillRectangle(s->dpy, s->locker, gc, px, py,
+                   (unsigned int)panel_w, (unsigned int)panel_h);
+    XSetForeground(s->dpy, gc, 0xd79921);
+    XDrawRectangle(s->dpy, s->locker, gc, px, py,
+                   (unsigned int)panel_w, (unsigned int)panel_h);
+
+    const char *user = getenv("USER");
+    struct passwd *pwd = getpwuid(getuid());
+    if (pwd && pwd->pw_name) user = pwd->pw_name;
+    if (!user) user = "user";
+
+    char title[192];
+    snprintf(title, sizeof(title), "%s", user);
+    int title_len = (int)strlen(title);
+    XSetForeground(s->dpy, gc, 0xebdbb2);
+    XDrawString(s->dpy, s->locker, gc,
+                px + (panel_w - title_len * 7) / 2, py + 44,
+                title, title_len);
+
+    int input_x = px + 44;
+    int input_y = py + 76;
+    int input_w = panel_w - 88;
+    int input_h = 36;
+    XSetForeground(s->dpy, gc, 0x1d2021);
+    XFillRectangle(s->dpy, s->locker, gc, input_x, input_y,
+                   (unsigned int)input_w, (unsigned int)input_h);
+    XSetForeground(s->dpy, gc, 0x504945);
+    XDrawRectangle(s->dpy, s->locker, gc, input_x, input_y,
+                   (unsigned int)input_w, (unsigned int)input_h);
+
+    char dots[128];
+    int dots_len = s->lock_password_len;
+    if (dots_len > (int)sizeof(dots) - 1) dots_len = (int)sizeof(dots) - 1;
+    memset(dots, '*', (size_t)dots_len);
+    dots[dots_len] = 0;
+    XSetForeground(s->dpy, gc, 0xebdbb2);
+    XDrawString(s->dpy, s->locker, gc, input_x + 14, input_y + 23,
+                dots, dots_len);
+
+    const char *hint = s->lock_failed ? "Authentication failed" : "Password";
+    int hint_len = (int)strlen(hint);
+    XSetForeground(s->dpy, gc, s->lock_failed ? 0xfb4934 : 0xa89984);
+    XDrawString(s->dpy, s->locker, gc,
+                px + (panel_w - hint_len * 7) / 2, py + 138,
+                hint, hint_len);
+    XFlush(s->dpy);
+}
+
+static void hide_locker(struct lfwm_server *s) {
+    if (!s->locker) return;
+    XUngrabKeyboard(s->dpy, CurrentTime);
+    XUngrabPointer(s->dpy, CurrentTime);
+    XUnmapWindow(s->dpy, s->locker);
+    s->locked = false;
+    s->lock_failed = false;
+    memset(s->lock_password, 0, sizeof(s->lock_password));
+    s->lock_password_len = 0;
+}
+
+static void show_locker(struct lfwm_server *s) {
+    int sw = DisplayWidth(s->dpy, s->screen);
+    int sh = DisplayHeight(s->dpy, s->screen);
+    hide_power_menu(s);
+    if (!s->locker) {
+        XSetWindowAttributes wa = {0};
+        wa.override_redirect = True;
+        wa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask |
+                        StructureNotifyMask;
+        s->locker = XCreateWindow(s->dpy, s->root, 0, 0,
+                                  (unsigned int)sw, (unsigned int)sh, 0,
+                                  CopyFromParent, InputOutput, CopyFromParent,
+                                  CWOverrideRedirect | CWEventMask, &wa);
+    }
+    s->locked = true;
+    s->lock_failed = false;
+    memset(s->lock_password, 0, sizeof(s->lock_password));
+    s->lock_password_len = 0;
+    XMapRaised(s->dpy, s->locker);
+    XRaiseWindow(s->dpy, s->locker);
+    XSetInputFocus(s->dpy, s->locker, RevertToPointerRoot, CurrentTime);
+    XGrabKeyboard(s->dpy, s->locker, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XGrabPointer(s->dpy, s->locker, True, ButtonPressMask,
+                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+    draw_locker(s);
+}
+
+static bool locker_handle_key(struct lfwm_server *s, XKeyEvent *ev) {
+    if (!s->locked || !s->locker) return false;
+    XRaiseWindow(s->dpy, s->locker);
+    XSetInputFocus(s->dpy, s->locker, RevertToPointerRoot, CurrentTime);
+
+    char buf[32];
+    KeySym sym = NoSymbol;
+    int n = XLookupString(ev, buf, sizeof(buf), &sym, NULL);
+    if (sym == XK_Return || sym == XK_KP_Enter) {
+        if (lock_authenticate(s)) {
+            hide_locker(s);
+            return true;
+        }
+        s->lock_failed = true;
+        memset(s->lock_password, 0, sizeof(s->lock_password));
+        s->lock_password_len = 0;
+        draw_locker(s);
+        return true;
+    }
+    if (sym == XK_BackSpace) {
+        if (s->lock_password_len > 0)
+            s->lock_password[--s->lock_password_len] = 0;
+        s->lock_failed = false;
+        draw_locker(s);
+        return true;
+    }
+    if (sym == XK_Escape) {
+        memset(s->lock_password, 0, sizeof(s->lock_password));
+        s->lock_password_len = 0;
+        s->lock_failed = false;
+        draw_locker(s);
+        return true;
+    }
+    for (int i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)buf[i];
+        if (c < 32 || c == 127)
+            continue;
+        if (s->lock_password_len < (int)sizeof(s->lock_password) - 1) {
+            s->lock_password[s->lock_password_len++] = (char)c;
+            s->lock_password[s->lock_password_len] = 0;
+        }
+    }
+    if (n > 0) {
+        s->lock_failed = false;
+        draw_locker(s);
+    }
+    return true;
+}
+
 static void draw_power_menu(struct lfwm_server *s) {
     if (!s->power_menu) return;
 
@@ -1139,7 +1382,7 @@ static void draw_power_menu(struct lfwm_server *s) {
     XFillRectangle(s->dpy, s->power_menu, gc, 0, 0,
                    (unsigned int)ow, (unsigned int)oh);
 
-    const char *labels[LFW_POWER_ITEMS] = {"ShutDown", "Reboot", "Sleep", "Logout", "Exit"};
+    const char *labels[LFW_POWER_ITEMS] = {"ShutDown", "Reboot", "Sleep", "Lock", "Exit"};
     const char *title = "Power";
     int cols = ow >= 940 ? 5 : ow >= 620 ? 3 : 2;
     int rows = (LFW_POWER_ITEMS + cols - 1) / cols;
@@ -1244,7 +1487,7 @@ static bool power_menu_handle_button(struct lfwm_server *s, XButtonEvent *ev) {
     if (choice == 0) spawn_cmd("systemctl poweroff || loginctl poweroff", -1);
     else if (choice == 1) spawn_cmd("systemctl reboot || loginctl reboot", -1);
     else if (choice == 2) spawn_cmd("systemctl suspend || loginctl suspend", -1);
-    else if (choice == 3) spawn_cmd("loginctl lock-session || xdg-screensaver lock || light-locker-command -l || dm-tool lock || slock || i3lock || xlock", -1);
+    else if (choice == 3) show_locker(s);
     else if (choice == 4) s->running = false;
     return true;
 }
@@ -1523,6 +1766,7 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     s->opacity_active = def_opacity_active;
     s->opacity_inactive = def_opacity_inactive;
+    s->opacity_drag = def_opacity_drag;
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
@@ -1578,6 +1822,7 @@ static void reload_config(struct lfwm_server *s) {
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     s->opacity_active = def_opacity_active;
     s->opacity_inactive = def_opacity_inactive;
+    s->opacity_drag = def_opacity_drag;
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
@@ -2153,6 +2398,7 @@ static void init_atoms(struct lfwm_server *s) {
     s->net_wm_window_type_toolbar = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", False);
     s->net_wm_window_type_dropdown_menu = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", False);
     s->net_wm_window_type_popup_menu = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE_POPUP_MENU", False);
+    s->xrootpmap_id = XInternAtom(s->dpy, "_XROOTPMAP_ID", False);
 
     Atom supported[] = {
         s->net_active_window,
@@ -2230,6 +2476,7 @@ static void init_server(struct lfwm_server *s) {
     s->ffm = def_ffm; s->sb = def_sb; s->sg = def_sg;
     s->opacity_active = def_opacity_active;
     s->opacity_inactive = def_opacity_inactive;
+    s->opacity_drag = def_opacity_drag;
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
@@ -2285,6 +2532,20 @@ static void maybe_refresh_bar(struct lfwm_server *s) {
 }
 
 static void handle_event(struct lfwm_server *s, XEvent *ev) {
+    if (s->locked) {
+        if (ev->type == KeyPress) {
+            locker_handle_key(s, &ev->xkey);
+        } else if (ev->type == Expose && ev->xexpose.window == s->locker) {
+            draw_locker(s);
+        } else if (ev->type == ConfigureNotify && ev->xconfigure.window == s->root) {
+            draw_locker(s);
+        } else if (s->locker) {
+            XRaiseWindow(s->dpy, s->locker);
+            XSetInputFocus(s->dpy, s->locker, RevertToPointerRoot, CurrentTime);
+        }
+        return;
+    }
+
     switch (ev->type) {
     case MapRequest:
         manage_window(s, ev->xmaprequest.window);
@@ -2311,11 +2572,18 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         break;
     }
     case KeyPress:
+        if (locker_handle_key(s, &ev->xkey))
+            break;
         if (power_menu_handle_key(s, &ev->xkey))
             break;
         handle_key(s, &ev->xkey);
         break;
     case ButtonPress:
+        if (s->locked) {
+            XRaiseWindow(s->dpy, s->locker);
+            XSetInputFocus(s->dpy, s->locker, RevertToPointerRoot, CurrentTime);
+            break;
+        }
         if (power_menu_handle_button(s, &ev->xbutton))
             break;
         if (drag_modifier_active(s, ev->xbutton.state) &&
@@ -2348,15 +2616,22 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         grab_keys(s);
         break;
     case Expose:
-        if (ev->xexpose.window == s->bar) draw_bar(s);
+        if (ev->xexpose.window == s->locker) draw_locker(s);
+        else if (ev->xexpose.window == s->bar) draw_bar(s);
         else if (ev->xexpose.window == s->power_menu) draw_power_menu(s);
         break;
     case ConfigureNotify:
-        if (ev->xconfigure.window == s->root) aw(s);
+        if (ev->xconfigure.window == s->root) {
+            aw(s);
+            if (s->locked)
+                draw_locker(s);
+        }
         break;
     default:
         break;
     }
+    if (s->locked && s->locker)
+        XRaiseWindow(s->dpy, s->locker);
     maybe_reload_config(s);
 }
 
@@ -2378,6 +2653,7 @@ static void cleanup(struct lfwm_server *s) {
         if (s->bar_gc) XFreeGC(s->dpy, s->bar_gc);
         if (s->bar) XDestroyWindow(s->dpy, s->bar);
         if (s->power_menu) XDestroyWindow(s->dpy, s->power_menu);
+        if (s->locker) XDestroyWindow(s->dpy, s->locker);
         XUngrabKey(s->dpy, AnyKey, AnyModifier, s->root);
         XCloseDisplay(s->dpy);
     }

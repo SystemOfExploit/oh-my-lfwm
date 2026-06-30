@@ -26,6 +26,7 @@ endif
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKGS) 2>/dev/null)
 LDFLAGS += -Wl,--as-needed
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)
+LDLIBS += -lpam
 
 SRC := src/lfwm.c
 MODULES := src/config.c src/layout.c

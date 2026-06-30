@@ -38,6 +38,7 @@ static bool  def_sb                 = false;
 static bool  def_sg                 = true;
 static float def_opacity_active     = 0.96f;
 static float def_opacity_inactive   = 0.88f;
+static float def_opacity_drag       = 0.72f;
 static bool  def_animations         = true;
 static int   def_animation_steps    = 8;
 static int   def_animation_delay_ms = 2;
@@ -351,6 +352,8 @@ static void pcl(struct lfwm_server *s, const char *line) {
             def_opacity_inactive = def_opacity_active;
         } else if (strcmp(k, "active_opacity") == 0) def_opacity_active = pf(v, def_opacity_active);
         else if (strcmp(k, "inactive_opacity") == 0) def_opacity_inactive = pf(v, def_opacity_inactive);
+        else if (strcmp(k, "drag_opacity") == 0 || strcmp(k, "move_opacity") == 0)
+            def_opacity_drag = pf(v, def_opacity_drag);
         else if (strcmp(k, "animations") == 0) def_animations = pb(v);
         else if (strcmp(k, "animation_steps") == 0) {
             def_animation_steps = atoi(v);
@@ -541,6 +544,7 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set focus_follows_mouse true\n"
         "set active_opacity 0.96\n"
         "set inactive_opacity 0.88\n"
+        "set drag_opacity 0.72\n"
         "set animations true\n"
         "set animation_steps 8\n"
         "set animation_delay_ms 2\n"

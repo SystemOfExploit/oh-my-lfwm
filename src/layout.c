@@ -73,7 +73,9 @@ static void set_opacity(struct lfwm_server *s, struct lfwm_view *v) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     float opacity = (v == ws->focused || v->fullscreen) ?
         s->opacity_active : s->opacity_inactive;
-    if (v->transient || (s->dragging && s->drag_view == v))
+    if (s->dragging && s->drag_view == v)
+        opacity = s->opacity_drag;
+    else if (v->transient)
         opacity = 1.0f;
     if (opacity >= 0.999f) {
         XDeleteProperty(s->dpy, v->win, s->net_wm_window_opacity);
