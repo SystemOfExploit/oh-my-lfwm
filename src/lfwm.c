@@ -264,6 +264,8 @@ static void ensure_core_bindings(struct lfwm_server *s) {
         ba(s, Mod4Mask, XK_Left, LFW_WS_PREV, 0, NULL);
     if (!set_binding_action(s, def_mod, XK_m, LFW_POWER_MENU, 0))
         ba(s, def_mod, XK_m, LFW_POWER_MENU, 0, NULL);
+    if (!set_binding_action(s, def_mod, XK_p, LFW_TOGGLE_SPLIT, 0))
+        ba(s, def_mod, XK_p, LFW_TOGGLE_SPLIT, 0, NULL);
     if (!set_binding_action(s, def_mod | ShiftMask, XK_m, LFW_TOGGLE_MAXIMIZE, 0))
         ba(s, def_mod | ShiftMask, XK_m, LFW_TOGGLE_MAXIMIZE, 0, NULL);
 }
@@ -1144,10 +1146,14 @@ static void draw_bar(struct lfwm_server *s) {
     int item_h = s->bar_h - s->bar_padding_y * 2;
     if (item_h < 1) item_h = 1;
     int item_y = (s->bar_h - item_h) / 2;
-    int baseline = s->bar_text_y > 0 ? s->bar_text_y : item_y + item_h / 2 + 5;
+    XFontStruct *font = XQueryFont(s->dpy, XGContextFromGC(s->bar_gc));
+    int char_w = font ? XTextWidth(font, "0", 1) : 7;
+    if (char_w < 1) char_w = 7;
+    int text_h = font ? font->ascent + font->descent : 12;
+    int baseline = s->bar_text_y > 0 ? s->bar_text_y : (s->bar_h - text_h) / 2 + (font ? font->ascent : 10);
     if (baseline < 1) baseline = 1;
     if (baseline > s->bar_h - 2) baseline = s->bar_h - 2;
-    int item_w = s->bar_workspace_pad_x * 2 + (s->bar_show_counts ? 5 : 2) * 7;
+    int item_w = s->bar_workspace_pad_x * 2 + (s->bar_show_counts ? 5 : 2) * char_w;
     if (item_w < 32) item_w = 32;
 
     for (int i = 0; i < 10; i++) {
@@ -1155,7 +1161,7 @@ static void draw_bar(struct lfwm_server *s) {
         char label[32];
         if (s->bar_show_counts && count > 0) snprintf(label, sizeof(label), "%d:%d", i + 1, count);
         else snprintf(label, sizeof(label), "%d", i + 1);
-        int text_w = (int)strlen(label) * 7;
+        int text_w = font ? XTextWidth(font, label, (int)strlen(label)) : (int)strlen(label) * char_w;
         int text_x = x + (item_w - text_w) / 2;
         bool active = i == s->current_ws;
         XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active : s->bar_inactive);
@@ -1172,7 +1178,8 @@ static void draw_bar(struct lfwm_server *s) {
         build_bar_status(s, ws, status, sizeof(status));
         int len = (int)strlen(status);
         if (len > 0) {
-            int tx = sw - len * 7 - s->bar_padding_x;
+            int status_w = font ? XTextWidth(font, status, len) : len * char_w;
+            int tx = sw - status_w - s->bar_padding_x;
             if (tx < x + s->bar_padding_x) tx = x + s->bar_padding_x;
             XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
             XDrawString(s->dpy, s->bar, s->bar_gc, tx, baseline, status, len);
@@ -1180,6 +1187,7 @@ static void draw_bar(struct lfwm_server *s) {
     }
     XRaiseWindow(s->dpy, s->bar);
     XMapRaised(s->dpy, s->bar);
+    if (font) XFreeFontInfo(NULL, font, 1);
     XFlush(s->dpy);
 }
 
@@ -1814,13 +1822,25 @@ static void swap_with_neighbor(struct lfwm_server *s, bool next) {
 static void toggle_split(struct lfwm_server *s) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     struct lfwm_view *v = ws->focused;
-    if (!v || v->floating || v->fullscreen || !v->node || !v->node->parent)
+    if (!v || v->floating || v->fullscreen)
         return;
 
-    v->node->parent->vertical = !v->node->parent->vertical;
-    if (ws->layout != LFW_LAYOUT_DWINDLE)
+    if (ws->layout == LFW_LAYOUT_VERT) {
+        ws->layout = LFW_LAYOUT_HORIZ;
+        aw(s);
+        return;
+    }
+    if (ws->layout == LFW_LAYOUT_HORIZ) {
+        ws->layout = LFW_LAYOUT_VERT;
+        aw(s);
+        return;
+    }
+
+    if (v->node && v->node->parent) {
+        v->node->parent->vertical = !v->node->parent->vertical;
         ws->layout = LFW_LAYOUT_DWINDLE;
-    aw(s);
+        aw(s);
+    }
 }
 
 static void reset_workspace_defaults(struct lfwm_server *s) {

@@ -540,7 +540,7 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set bar_show_status true\n"
         "set bar_status lfwm\n"
         "set bar_modules layout cpu ram datetime\n"
-        "set bar_datetime_format %Y-%m-%d %H:%M\n"
+        "set bar_datetime_format %%Y-%%m-%%d %%H:%%M\n"
         "set gap_in 8\n"
         "set gap_out 12\n"
         "set bar_height 28\n"
