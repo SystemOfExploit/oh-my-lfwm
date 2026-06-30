@@ -40,6 +40,8 @@ static void set_opacity(struct lfwm_server *s, struct lfwm_view *v) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     float opacity = (v == ws->focused || v->fullscreen) ?
         s->opacity_active : s->opacity_inactive;
+    if (v->transient || (s->dragging && s->drag_view == v))
+        opacity = 1.0f;
     if (opacity >= 0.999f) {
         XDeleteProperty(s->dpy, v->win, s->net_wm_window_opacity);
         return;
@@ -55,7 +57,13 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v, int x, int 
     if (w < 1) w = 1;
     if (h < 1) h = 1;
 
-    if (!v->configured || s->dragging || v->fullscreen || !s->animations || s->animation_steps <= 1) {
+    bool animate = v->configured && !s->dragging && !v->fullscreen && !v->transient &&
+                   s->animations && s->animation_steps > 1;
+    if (animate && s->animation_max_windows > 0 &&
+        view_count(&s->workspaces[s->current_ws], false) > s->animation_max_windows)
+        animate = false;
+
+    if (!animate) {
         XMoveResizeWindow(s->dpy, v->win, x, y, (unsigned int)w, (unsigned int)h);
     } else {
         int sx = v->cx, sy = v->cy, sw = v->cw, sh = v->ch;
@@ -100,11 +108,11 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     if (v->w < 1) v->w = 1;
     if (v->h < 1) v->h = 1;
     if (v->floating) {
-        int min_y = s->bar_h + s->gap_out;
+        int min_y = workarea_y(s) + s->gap_out;
         int max_w = ow - s->gap_out * 2;
-        int max_h = oh - min_y - s->gap_out;
+        int max_h = workarea_h(s, oh) - s->gap_out * 2;
         if (max_w < 80) max_w = ow;
-        if (max_h < 40) max_h = oh - s->bar_h;
+        if (max_h < 40) max_h = workarea_h(s, oh);
         if (v->w > max_w) v->w = max_w;
         if (v->h > max_h) v->h = max_h;
         v->x = clamp_int(v->x, s->gap_out, s->gap_out + max_w - v->w);
@@ -112,7 +120,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     }
     set_border(s, v, bw);
     set_opacity(s, v);
-    int py = v->floating ? v->y : v->y + s->bar_h;
+    int py = v->floating ? v->y : v->y + workarea_y(s);
     place_window(s, v, v->x, py, v->w, v->h);
     if (v->floating)
         XRaiseWindow(s->dpy, v->win);
@@ -123,11 +131,11 @@ static void popup_float_geometry(struct lfwm_server *s, struct lfwm_view *v) {
     if (!gos(s, &sw, &sh)) return;
 
     int area_x = s->gap_out;
-    int area_y = s->bar_h + s->gap_out;
+    int area_y = workarea_y(s) + s->gap_out;
     int area_w = sw - s->gap_out * 2;
-    int area_h = sh - s->bar_h - s->gap_out * 2;
+    int area_h = workarea_h(s, sh) - s->gap_out * 2;
     if (area_w < 320) area_w = sw;
-    if (area_h < 200) area_h = sh - s->bar_h;
+    if (area_h < 200) area_h = workarea_h(s, sh);
 
     int max_w = area_w * 3 / 4;
     int max_h = area_h * 3 / 4;
@@ -392,7 +400,7 @@ static void aw(struct lfwm_server *s) {
     int outw, outh, gi = s->gap_in, go = s->gap_out;
     if (!gos(s, &outw, &outh)) return;
 
-    outh -= s->bar_h;
+    outh = workarea_h(s, outh);
     if (outh < 1) outh = 1;
 
     int n = ct(ws);

@@ -104,14 +104,28 @@ struct lfwm_server {
     int bw_inactive;
     int gap_in;
     int gap_out;
+    unsigned long root_bg;
     unsigned long ba;
     unsigned long bi;
+    bool bar_enabled;
     unsigned long bar_bg;
     unsigned long bar_active;
     unsigned long bar_inactive;
     unsigned long bar_active_fg;
     unsigned long bar_inactive_fg;
     unsigned long bar_status_fg;
+    unsigned long bar_border;
+    int bar_border_width;
+    int bar_position;
+    int bar_padding_x;
+    int bar_padding_y;
+    int bar_workspace_gap;
+    int bar_workspace_pad_x;
+    int bar_text_y;
+    bool bar_show_counts;
+    bool bar_show_layout;
+    bool bar_show_status;
+    char bar_status_text[128];
     unsigned int modifier;
     unsigned int drag_mod;
     bool edge_resize;
@@ -124,6 +138,7 @@ struct lfwm_server {
     bool animations;
     int animation_steps;
     int animation_delay_ms;
+    int animation_max_windows;
     time_t config_mtime;
     time_t last_config_check;
     int pending_spawn_ws[32];
@@ -561,34 +576,26 @@ static int clamp_int(int v, int min, int max) {
 }
 
 static time_t config_file_mtime(void) {
-    const char *home = getenv("HOME");
-    const char *xdg = getenv("XDG_CONFIG_HOME");
-    char path[1024], pypath[1024], dirpath[1024], child[1024];
+    char path[4096], pypath[4096], dirpath[4096], child[4096];
     struct stat st;
     time_t newest = 0;
 
-    if (xdg) {
-        snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
-        snprintf(pypath, sizeof(pypath), "%s/lfwm/lfwm.py", xdg);
-        snprintf(dirpath, sizeof(dirpath), "%s/lfwm/conf.d", xdg);
-    } else {
-        snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
-        snprintf(pypath, sizeof(pypath), "%s/.config/lfwm/lfwm.py", home ? home : ".");
-        snprintf(dirpath, sizeof(dirpath), "%s/.config/lfwm/conf.d", home ? home : ".");
-    }
-
-    if (stat(path, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
-    if (stat(pypath, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
-    DIR *dir = opendir(dirpath);
-    if (dir) {
-        struct dirent *de;
-        while ((de = readdir(dir)) != NULL) {
-            size_t len = strlen(de->d_name);
-            if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
-            snprintf(child, sizeof(child), "%s/%s", dirpath, de->d_name);
-            if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+    if (conf_user_paths(path, sizeof(path), pypath, sizeof(pypath),
+                        dirpath, sizeof(dirpath))) {
+        if (stat(path, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+        if (stat(pypath, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+        DIR *dir = opendir(dirpath);
+        if (dir) {
+            struct dirent *de;
+            while ((de = readdir(dir)) != NULL) {
+                size_t len = strlen(de->d_name);
+                if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
+                if (!conf_join_path(child, sizeof(child), dirpath, de->d_name))
+                    continue;
+                if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+            }
+            closedir(dir);
         }
-        closedir(dir);
     }
 
     if (newest)
@@ -602,7 +609,8 @@ static time_t config_file_mtime(void) {
         while ((de = readdir(dir)) != NULL) {
             size_t len = strlen(de->d_name);
             if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
-            snprintf(child, sizeof(child), "/etc/lfwm/conf.d/%s", de->d_name);
+            if (!conf_join_path(child, sizeof(child), "/etc/lfwm/conf.d", de->d_name))
+                continue;
             if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
         }
         closedir(dir);
@@ -674,6 +682,26 @@ static const char *layout_name(enum lfwm_layout layout) {
     }
 }
 
+static int bar_reserved_height(struct lfwm_server *s) {
+    return s->bar_enabled ? s->bar_h : 0;
+}
+
+static int workarea_y(struct lfwm_server *s) {
+    return s->bar_enabled && s->bar_position == 0 ? s->bar_h : 0;
+}
+
+static int workarea_h(struct lfwm_server *s, int screen_h) {
+    int h = screen_h - bar_reserved_height(s);
+    return h > 1 ? h : 1;
+}
+
+static int bar_window_y(struct lfwm_server *s, int screen_h) {
+    if (!s->bar_enabled || s->bar_position == 0)
+        return 0;
+    int y = screen_h - s->bar_h;
+    return y > 0 ? y : 0;
+}
+
 static void update_workarea(struct lfwm_server *s) {
     if (!s->net_workarea) return;
     int sw = DisplayWidth(s->dpy, s->screen);
@@ -681,9 +709,9 @@ static void update_workarea(struct lfwm_server *s) {
     long workarea[10 * 4];
     for (int i = 0; i < 10; i++) {
         workarea[i * 4 + 0] = 0;
-        workarea[i * 4 + 1] = s->bar_h;
+        workarea[i * 4 + 1] = workarea_y(s);
         workarea[i * 4 + 2] = sw;
-        workarea[i * 4 + 3] = sh > s->bar_h ? sh - s->bar_h : sh;
+        workarea[i * 4 + 3] = workarea_h(s, sh);
     }
     XChangeProperty(s->dpy, s->root, s->net_workarea, XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char *)workarea, 10 * 4);
@@ -694,11 +722,11 @@ static void center_floating_view(struct lfwm_server *s, struct lfwm_view *v, str
     if (!gos(s, &sw, &sh)) return;
 
     int area_x = s->gap_out;
-    int area_y = s->bar_h + s->gap_out;
+    int area_y = workarea_y(s) + s->gap_out;
     int area_w = sw - s->gap_out * 2;
-    int area_h = sh - s->bar_h - s->gap_out * 2;
+    int area_h = workarea_h(s, sh) - s->gap_out * 2;
     if (area_w < 80) area_w = sw;
-    if (area_h < 40) area_h = sh - s->bar_h;
+    if (area_h < 40) area_h = workarea_h(s, sh);
 
     if (v->w < 80) v->w = 80;
     if (v->h < 40) v->h = 40;
@@ -804,46 +832,84 @@ static int output_at(struct lfwm_server *s, int x, int y) {
 }
 
 static void draw_bar(struct lfwm_server *s) {
+    if (!s->bar_enabled) {
+        if (s->bar)
+            XUnmapWindow(s->dpy, s->bar);
+        update_workarea(s);
+        return;
+    }
     if (!s->bar) return;
     int sw = DisplayWidth(s->dpy, s->screen);
+    int sh = DisplayHeight(s->dpy, s->screen);
     update_workarea(s);
-    XMoveResizeWindow(s->dpy, s->bar, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
+    if (s->bar_h <= 0) s->bar_h = 26;
+    XMoveResizeWindow(s->dpy, s->bar, 0, bar_window_y(s, sh),
+                      (unsigned int)sw, (unsigned int)s->bar_h);
+    XSetWindowBorderWidth(s->dpy, s->bar, (unsigned int)s->bar_border_width);
+    XSetWindowBorder(s->dpy, s->bar, s->bar_border);
     XSetForeground(s->dpy, s->bar_gc, s->bar_bg);
     XFillRectangle(s->dpy, s->bar, s->bar_gc, 0, 0, (unsigned int)sw, (unsigned int)s->bar_h);
 
-    int x = 8;
+    int x = s->bar_padding_x;
+    int item_h = s->bar_h - s->bar_padding_y * 2;
+    if (item_h < 1) item_h = 1;
+    int baseline = s->bar_text_y > 0 ? s->bar_text_y : s->bar_h / 2 + 5;
+    if (baseline < 1) baseline = 1;
+    if (baseline > s->bar_h - 2) baseline = s->bar_h - 2;
+
     for (int i = 0; i < 10; i++) {
         int count = workspace_count(&s->workspaces[i], false);
-        char label[16];
-        if (count > 0) snprintf(label, sizeof(label), " %d:%d ", i + 1, count);
+        char label[32];
+        if (s->bar_show_counts && count > 0) snprintf(label, sizeof(label), "%d:%d", i + 1, count);
         else snprintf(label, sizeof(label), " %d ", i + 1);
-        int w = 22 + (int)strlen(label) * 7;
+        int w = s->bar_workspace_pad_x * 2 + (int)strlen(label) * 7;
+        if (w < 18) w = 18;
         bool active = i == s->current_ws;
         XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active : s->bar_inactive);
-        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, 4, (unsigned int)w, (unsigned int)(s->bar_h - 8));
+        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, s->bar_padding_y,
+                       (unsigned int)w, (unsigned int)item_h);
         XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active_fg : s->bar_inactive_fg);
-        XDrawString(s->dpy, s->bar, s->bar_gc, x + 8, 18, label, (int)strlen(label));
-        x += w + 6;
+        XDrawString(s->dpy, s->bar, s->bar_gc, x + s->bar_workspace_pad_x,
+                    baseline, label, (int)strlen(label));
+        x += w + s->bar_workspace_gap;
     }
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
-    char status[128];
-    snprintf(status, sizeof(status), "lfwm | ws %d | %s | tiled %d | total %d",
-             s->current_ws + 1, layout_name(ws->layout),
-             workspace_count(ws, true), workspace_count(ws, false));
-    int len = (int)strlen(status);
-    int tx = sw - len * 7 - 12;
-    if (tx < x + 12) tx = x + 12;
-    XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
-    XDrawString(s->dpy, s->bar, s->bar_gc, tx, 18, status, len);
+    char status[512];
+    if (s->bar_show_status) {
+        if (s->bar_show_layout) {
+            snprintf(status, sizeof(status), "%s | ws %d | %s | tiled %d | total %d",
+                     s->bar_status_text, s->current_ws + 1, layout_name(ws->layout),
+                     workspace_count(ws, true), workspace_count(ws, false));
+        } else {
+            snprintf(status, sizeof(status), "%s | ws %d | total %d",
+                     s->bar_status_text, s->current_ws + 1, workspace_count(ws, false));
+        }
+        int len = (int)strlen(status);
+        int tx = sw - len * 7 - s->bar_padding_x;
+        if (tx < x + s->bar_padding_x) tx = x + s->bar_padding_x;
+        XSetForeground(s->dpy, s->bar_gc, s->bar_status_fg);
+        XDrawString(s->dpy, s->bar, s->bar_gc, tx, baseline, status, len);
+    }
     XRaiseWindow(s->dpy, s->bar);
+    XMapRaised(s->dpy, s->bar);
     XFlush(s->dpy);
 }
 
 static void setup_bar(struct lfwm_server *s) {
+    if (!s->bar_enabled) {
+        update_workarea(s);
+        return;
+    }
+    if (s->bar) {
+        draw_bar(s);
+        return;
+    }
     int sw = DisplayWidth(s->dpy, s->screen);
+    int sh = DisplayHeight(s->dpy, s->screen);
     if (s->bar_h <= 0) s->bar_h = 26;
-    s->bar = XCreateSimpleWindow(s->dpy, s->root, 0, 0, (unsigned int)sw,
-                                 (unsigned int)s->bar_h, 0, s->bar_bg, s->bar_bg);
+    s->bar = XCreateSimpleWindow(s->dpy, s->root, 0, bar_window_y(s, sh), (unsigned int)sw,
+                                 (unsigned int)s->bar_h, (unsigned int)s->bar_border_width,
+                                 s->bar_border, s->bar_bg);
     XSetWindowAttributes wa = { .override_redirect = True };
     XChangeWindowAttributes(s->dpy, s->bar, CWOverrideRedirect, &wa);
     XSelectInput(s->dpy, s->bar, ExposureMask);
@@ -855,9 +921,11 @@ static void setup_bar(struct lfwm_server *s) {
 static void setup_root_appearance(struct lfwm_server *s) {
     Colormap cmap = DefaultColormap(s->dpy, s->screen);
     XColor color, exact;
-    unsigned long bg = BlackPixel(s->dpy, s->screen);
+    unsigned long bg = s->root_bg;
+    char spec[32];
 
-    if (XAllocNamedColor(s->dpy, cmap, "#282828", &color, &exact))
+    snprintf(spec, sizeof(spec), "#%06lx", s->root_bg & 0xffffffUL);
+    if (XAllocNamedColor(s->dpy, cmap, spec, &color, &exact))
         bg = color.pixel;
 
     XSetWindowBackground(s->dpy, s->root, bg);
@@ -1096,14 +1164,29 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     }
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->root_bg = def_root_bg;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_enabled = def_bar_enabled && def_bar_height != 0;
     s->bar_bg = def_bar_bg;
     s->bar_active = def_bar_active;
     s->bar_inactive = def_bar_inactive;
     s->bar_active_fg = def_bar_active_fg;
     s->bar_inactive_fg = def_bar_inactive_fg;
     s->bar_status_fg = def_bar_status_fg;
+    s->bar_border = def_bar_border;
+    s->bar_border_width = def_bar_border_width;
+    s->bar_position = def_bar_position;
+    s->bar_padding_x = def_bar_padding_x;
+    s->bar_padding_y = def_bar_padding_y;
+    s->bar_workspace_gap = def_bar_workspace_gap;
+    s->bar_workspace_pad_x = def_bar_workspace_pad_x;
+    s->bar_text_y = def_bar_text_y;
+    s->bar_show_counts = def_bar_show_counts;
+    s->bar_show_layout = def_bar_show_layout;
+    s->bar_show_status = def_bar_show_status;
+    strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
+    s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1113,6 +1196,7 @@ static void reset_workspace_defaults(struct lfwm_server *s) {
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
+    s->animation_max_windows = def_animation_max_windows;
 }
 
 static void apply_workspace_defaults(struct lfwm_server *s) {
@@ -1135,14 +1219,29 @@ static void reload_config(struct lfwm_server *s) {
     ensure_core_bindings(s);
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->root_bg = def_root_bg;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_enabled = def_bar_enabled && def_bar_height != 0;
     s->bar_bg = def_bar_bg;
     s->bar_active = def_bar_active;
     s->bar_inactive = def_bar_inactive;
     s->bar_active_fg = def_bar_active_fg;
     s->bar_inactive_fg = def_bar_inactive_fg;
     s->bar_status_fg = def_bar_status_fg;
+    s->bar_border = def_bar_border;
+    s->bar_border_width = def_bar_border_width;
+    s->bar_position = def_bar_position;
+    s->bar_padding_x = def_bar_padding_x;
+    s->bar_padding_y = def_bar_padding_y;
+    s->bar_workspace_gap = def_bar_workspace_gap;
+    s->bar_workspace_pad_x = def_bar_workspace_pad_x;
+    s->bar_text_y = def_bar_text_y;
+    s->bar_show_counts = def_bar_show_counts;
+    s->bar_show_layout = def_bar_show_layout;
+    s->bar_show_status = def_bar_show_status;
+    strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
+    s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1152,12 +1251,16 @@ static void reload_config(struct lfwm_server *s) {
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
+    s->animation_max_windows = def_animation_max_windows;
     apply_workspace_defaults(s);
     s->config_mtime = config_file_mtime();
     grab_keys(s);
     for (int i = 0; i < 10; i++)
         for (struct lfwm_view *v = s->workspaces[i].head; v; v = v->next)
             grab_buttons_for_window(s, v->win);
+    setup_root_appearance(s);
+    if (s->bar_enabled && !s->bar)
+        setup_bar(s);
     sync_workspace_visibility(s);
     aw(s);
 }
@@ -1634,6 +1737,7 @@ static void end_drag(struct lfwm_server *s) {
     s->drag_temp_floating = false;
     XUngrabPointer(s->dpy, CurrentTime);
     if (relayout) aw(s);
+    else if (v) ag(s, v);
 }
 
 static void handle_client_message(struct lfwm_server *s, XClientMessageEvent *ev) {
@@ -1765,14 +1869,29 @@ static void init_server(struct lfwm_server *s) {
     ensure_core_bindings(s);
     s->bw_active = def_bw_active; s->bw_inactive = def_bw_inactive;
     s->gap_in = def_gap_in; s->gap_out = def_gap_out;
+    s->root_bg = def_root_bg;
     s->bar_h = def_bar_height;
     s->ba = def_ba; s->bi = def_bi;
+    s->bar_enabled = def_bar_enabled && def_bar_height != 0;
     s->bar_bg = def_bar_bg;
     s->bar_active = def_bar_active;
     s->bar_inactive = def_bar_inactive;
     s->bar_active_fg = def_bar_active_fg;
     s->bar_inactive_fg = def_bar_inactive_fg;
     s->bar_status_fg = def_bar_status_fg;
+    s->bar_border = def_bar_border;
+    s->bar_border_width = def_bar_border_width;
+    s->bar_position = def_bar_position;
+    s->bar_padding_x = def_bar_padding_x;
+    s->bar_padding_y = def_bar_padding_y;
+    s->bar_workspace_gap = def_bar_workspace_gap;
+    s->bar_workspace_pad_x = def_bar_workspace_pad_x;
+    s->bar_text_y = def_bar_text_y;
+    s->bar_show_counts = def_bar_show_counts;
+    s->bar_show_layout = def_bar_show_layout;
+    s->bar_show_status = def_bar_show_status;
+    strncpy(s->bar_status_text, def_bar_status_text, sizeof(s->bar_status_text) - 1);
+    s->bar_status_text[sizeof(s->bar_status_text) - 1] = 0;
     s->modifier = def_mod; s->drag_mod = def_drag;
     s->edge_resize = def_edge_resize;
     s->edge_resize_margin = def_edge_resize_margin;
@@ -1782,6 +1901,7 @@ static void init_server(struct lfwm_server *s) {
     s->animations = def_animations;
     s->animation_steps = def_animation_steps;
     s->animation_delay_ms = def_animation_delay_ms;
+    s->animation_max_windows = def_animation_max_windows;
     apply_workspace_defaults(s);
     s->config_mtime = config_file_mtime();
 

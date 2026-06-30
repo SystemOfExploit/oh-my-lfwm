@@ -2,6 +2,8 @@
 static int   def_bw_inactive        = 2;
 static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
+static unsigned long def_root_bg    = 0x282828;
+static bool  def_bar_enabled        = true;
 static int   def_bar_height         = 26;
 static unsigned long def_ba         = 0xd79921;
 static unsigned long def_bi         = 0x504945;
@@ -11,6 +13,18 @@ static unsigned long def_bar_inactive = 0x3c3836;
 static unsigned long def_bar_active_fg = 0x282828;
 static unsigned long def_bar_inactive_fg = 0xebdbb2;
 static unsigned long def_bar_status_fg = 0xb8bb26;
+static unsigned long def_bar_border = 0x504945;
+static int   def_bar_border_width   = 0;
+static int   def_bar_position       = 0;
+static int   def_bar_padding_x      = 8;
+static int   def_bar_padding_y      = 4;
+static int   def_bar_workspace_gap  = 6;
+static int   def_bar_workspace_pad_x = 8;
+static int   def_bar_text_y         = 0;
+static bool  def_bar_show_counts    = true;
+static bool  def_bar_show_layout    = true;
+static bool  def_bar_show_status    = true;
+static char  def_bar_status_text[128] = "lfwm";
 static enum lfwm_layout def_layout  = LFW_LAYOUT_DWINDLE;
 static float def_mr                 = 0.50f;
 static int   def_mc                 = 1;
@@ -27,6 +41,7 @@ static float def_opacity_inactive   = 0.88f;
 static bool  def_animations         = true;
 static int   def_animation_steps    = 8;
 static int   def_animation_delay_ms = 2;
+static int   def_animation_max_windows = 6;
 
 static int   dwl[10];
 static float dwmr[10];
@@ -45,6 +60,79 @@ static unsigned long parse_color(const char *s, unsigned long fallback) {
     char buf[9] = {0};
     memcpy(buf, p, 6);
     return strtoul(buf, NULL, 16);
+}
+
+static bool conf_join_path(char *dst, size_t dst_size, const char *dir, const char *name) {
+    size_t dl = strlen(dir);
+    size_t nl = strlen(name);
+    bool slash = dl > 0 && dir[dl - 1] == '/';
+    size_t need = dl + (slash ? 0 : 1) + nl + 1;
+    if (need > dst_size) return false;
+    memcpy(dst, dir, dl);
+    size_t pos = dl;
+    if (!slash) dst[pos++] = '/';
+    memcpy(dst + pos, name, nl + 1);
+    return true;
+}
+
+static bool conf_concat(char *dst, size_t dst_size, const char *a, const char *b) {
+    size_t al = strlen(a);
+    size_t bl = strlen(b);
+    if (al + bl + 1 > dst_size) return false;
+    memcpy(dst, a, al);
+    memcpy(dst + al, b, bl + 1);
+    return true;
+}
+
+static bool conf_user_paths(char *path, size_t path_size,
+                            char *pypath, size_t pypath_size,
+                            char *dirpath, size_t dirpath_size) {
+    const char *home = getenv("HOME");
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    char base[4096];
+    char parent[4096];
+
+    if (xdg && *xdg) {
+        if (!conf_join_path(base, sizeof(base), xdg, "lfwm"))
+            return false;
+    } else {
+        if (!conf_join_path(parent, sizeof(parent), home ? home : ".", ".config"))
+            return false;
+        if (!conf_join_path(base, sizeof(base), parent, "lfwm"))
+            return false;
+    }
+
+    return conf_join_path(path, path_size, base, "lfwm.conf") &&
+           conf_join_path(pypath, pypath_size, base, "lfwm.py") &&
+           conf_join_path(dirpath, dirpath_size, base, "conf.d");
+}
+
+static bool conf_python_cmd(char *dst, size_t dst_size, const char *path) {
+    const char prefix[] = "python3 \"";
+    const char suffix[] = "\"";
+    size_t pl = sizeof(prefix) - 1;
+    size_t sl = sizeof(suffix) - 1;
+    size_t path_len = strlen(path);
+    if (pl + path_len + sl + 1 > dst_size) return false;
+    memcpy(dst, prefix, pl);
+    memcpy(dst + pl, path, path_len);
+    memcpy(dst + pl + path_len, suffix, sl + 1);
+    return true;
+}
+
+static void conf_copy_words(char *dst, size_t dst_size, char **av, int start, int ac) {
+    size_t pos = 0;
+    if (!dst_size) return;
+    dst[0] = 0;
+    for (int i = start; i < ac; i++) {
+        size_t len = strlen(av[i]);
+        size_t need = pos + (i > start ? 1 : 0) + len + 1;
+        if (need > dst_size) break;
+        if (i > start) dst[pos++] = ' ';
+        memcpy(dst + pos, av[i], len);
+        pos += len;
+        dst[pos] = 0;
+    }
 }
 
 static unsigned int pm(const char *s) {
@@ -178,7 +266,8 @@ static void pcl(struct lfwm_server *s, const char *line) {
         const char *src = av[1];
         if (src[0] == '~') {
             const char *home = getenv("HOME");
-            snprintf(path, sizeof(path), "%s%s", home ? home : ".", src + 1);
+            if (!conf_concat(path, sizeof(path), home ? home : ".", src + 1))
+                return;
             src = path;
         }
         load_config_path(s, src);
@@ -191,11 +280,52 @@ static void pcl(struct lfwm_server *s, const char *line) {
         else if (strcmp(k, "gap_size") == 0) { def_gap_in = atoi(v); def_gap_out = atoi(v); }
         else if (strcmp(k, "gap_in") == 0) def_gap_in = atoi(v);
         else if (strcmp(k, "gap_out") == 0) def_gap_out = atoi(v);
+        else if (strcmp(k, "root_bg") == 0 || strcmp(k, "root_background") == 0)
+            def_root_bg = parse_color(v, def_root_bg);
+        else if (strcmp(k, "bar") == 0 || strcmp(k, "bar_enabled") == 0)
+            def_bar_enabled = pb(v);
+        else if (strcmp(k, "bar_position") == 0) {
+            def_bar_position = strcasecmp(v, "bottom") == 0 ? 1 : 0;
+        }
         else if (strcmp(k, "bar_height") == 0) {
             def_bar_height = atoi(v);
-            if (def_bar_height < 18) def_bar_height = 18;
+            if (def_bar_height < 0) def_bar_height = 0;
+            if (def_bar_height > 0 && def_bar_height < 18) def_bar_height = 18;
             if (def_bar_height > 96) def_bar_height = 96;
         }
+        else if (strcmp(k, "bar_padding_x") == 0 || strcmp(k, "bar_pad_x") == 0) {
+            def_bar_padding_x = atoi(v);
+            if (def_bar_padding_x < 0) def_bar_padding_x = 0;
+            if (def_bar_padding_x > 64) def_bar_padding_x = 64;
+        }
+        else if (strcmp(k, "bar_padding_y") == 0 || strcmp(k, "bar_pad_y") == 0) {
+            def_bar_padding_y = atoi(v);
+            if (def_bar_padding_y < 0) def_bar_padding_y = 0;
+            if (def_bar_padding_y > 32) def_bar_padding_y = 32;
+        }
+        else if (strcmp(k, "bar_workspace_gap") == 0 || strcmp(k, "bar_gap") == 0) {
+            def_bar_workspace_gap = atoi(v);
+            if (def_bar_workspace_gap < 0) def_bar_workspace_gap = 0;
+            if (def_bar_workspace_gap > 48) def_bar_workspace_gap = 48;
+        }
+        else if (strcmp(k, "bar_workspace_pad_x") == 0 || strcmp(k, "bar_item_pad_x") == 0) {
+            def_bar_workspace_pad_x = atoi(v);
+            if (def_bar_workspace_pad_x < 2) def_bar_workspace_pad_x = 2;
+            if (def_bar_workspace_pad_x > 64) def_bar_workspace_pad_x = 64;
+        }
+        else if (strcmp(k, "bar_text_y") == 0) {
+            def_bar_text_y = atoi(v);
+            if (def_bar_text_y < 0) def_bar_text_y = 0;
+            if (def_bar_text_y > 96) def_bar_text_y = 96;
+        }
+        else if (strcmp(k, "bar_show_counts") == 0)
+            def_bar_show_counts = pb(v);
+        else if (strcmp(k, "bar_show_layout") == 0)
+            def_bar_show_layout = pb(v);
+        else if (strcmp(k, "bar_show_status") == 0)
+            def_bar_show_status = pb(v);
+        else if (strcmp(k, "bar_status") == 0 || strcmp(k, "bar_status_text") == 0)
+            conf_copy_words(def_bar_status_text, sizeof(def_bar_status_text), av, 2, ac);
         else if (strcmp(k, "modifier") == 0) def_mod = pm(v);
         else if (strcmp(k, "drag_modifier") == 0) def_drag = pm(v);
         else if (strcmp(k, "edge_resize") == 0) def_edge_resize = pb(v);
@@ -230,6 +360,11 @@ static void pcl(struct lfwm_server *s, const char *line) {
             if (def_animation_delay_ms < 0) def_animation_delay_ms = 0;
             if (def_animation_delay_ms > 50) def_animation_delay_ms = 50;
         }
+        else if (strcmp(k, "animation_max_windows") == 0) {
+            def_animation_max_windows = atoi(v);
+            if (def_animation_max_windows < 0) def_animation_max_windows = 0;
+            if (def_animation_max_windows > 100) def_animation_max_windows = 100;
+        }
         else if (strcmp(k, "border_active") == 0) def_ba = parse_color(v, def_ba);
         else if (strcmp(k, "border_inactive") == 0) def_bi = parse_color(v, def_bi);
         else if (strcmp(k, "bar_bg") == 0 || strcmp(k, "bar_background") == 0)
@@ -244,6 +379,13 @@ static void pcl(struct lfwm_server *s, const char *line) {
             def_bar_inactive_fg = parse_color(v, def_bar_inactive_fg);
         else if (strcmp(k, "bar_status_fg") == 0)
             def_bar_status_fg = parse_color(v, def_bar_status_fg);
+        else if (strcmp(k, "bar_border") == 0)
+            def_bar_border = parse_color(v, def_bar_border);
+        else if (strcmp(k, "bar_border_width") == 0) {
+            def_bar_border_width = atoi(v);
+            if (def_bar_border_width < 0) def_bar_border_width = 0;
+            if (def_bar_border_width > 8) def_bar_border_width = 8;
+        }
     } else if (strcmp(av[0], "ws") == 0 && ac >= 4) {
         int wi = atoi(av[1]) - 1;
         if (wi >= 0 && wi < 10) {
@@ -269,10 +411,7 @@ static void pcl(struct lfwm_server *s, const char *line) {
         char cmd[4096] = {0};
         if (sym == NoSymbol || action == LFW_NONE) return;
         if (action == LFW_SPAWN && ac > 4) {
-            for (int i = 4; i < ac; i++) {
-                if (i > 4) strcat(cmd, " ");
-                strcat(cmd, av[i]);
-            }
+            conf_copy_words(cmd, sizeof(cmd), av, 4, ac);
         } else if ((action == LFW_WS_SWITCH || action == LFW_WS_MOVE_AND_SWITCH ||
                     action == LFW_WS_MOVE) && ac > 4) {
             arg = atoi(av[4]) - 1;
@@ -297,10 +436,7 @@ static void pcl(struct lfwm_server *s, const char *line) {
         ra(s, app_id, title, ws, floating, fullscreen);
     } else if (strcmp(av[0], "exec") == 0 && ac >= 2) {
         char cmd[4096] = {0};
-        for (int i = 1; i < ac; i++) {
-            if (i > 1) strcat(cmd, " ");
-            strcat(cmd, av[i]);
-        }
+        conf_copy_words(cmd, sizeof(cmd), av, 1, ac);
         aa(s, cmd);
     }
 }
@@ -321,13 +457,14 @@ static bool load_config_dir(struct lfwm_server *s, const char *path) {
     if (!dir) return false;
 
     struct dirent *de;
-    char child[1024];
+    char child[4096];
     bool loaded = false;
     while ((de = readdir(dir)) != NULL) {
         size_t len = strlen(de->d_name);
         if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0)
             continue;
-        snprintf(child, sizeof(child), "%s/%s", path, de->d_name);
+        if (!conf_join_path(child, sizeof(child), path, de->d_name))
+            continue;
         if (load_config_path(s, child)) loaded = true;
     }
     closedir(dir);
@@ -371,12 +508,25 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set border_width 2\n"
         "set border_active #d79921\n"
         "set border_inactive #504945\n"
+        "set root_bg #282828\n"
+        "set bar_enabled true\n"
+        "set bar_position top\n"
         "set bar_bg #282828\n"
         "set bar_active #d79921\n"
         "set bar_inactive #3c3836\n"
         "set bar_active_fg #282828\n"
         "set bar_inactive_fg #ebdbb2\n"
         "set bar_status_fg #b8bb26\n"
+        "set bar_border #504945\n"
+        "set bar_border_width 0\n"
+        "set bar_padding_x 8\n"
+        "set bar_padding_y 4\n"
+        "set bar_workspace_gap 6\n"
+        "set bar_workspace_pad_x 8\n"
+        "set bar_show_counts true\n"
+        "set bar_show_layout true\n"
+        "set bar_show_status true\n"
+        "set bar_status lfwm\n"
         "set gap_in 8\n"
         "set gap_out 12\n"
         "set bar_height 26\n"
@@ -393,6 +543,7 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set animations true\n"
         "set animation_steps 8\n"
         "set animation_delay_ms 2\n"
+        "set animation_max_windows 6\n"
         "set master_ratio 0.50\n"
         "set master_count 1\n"
         "\n"
@@ -453,36 +604,27 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
 }
 
 static void lc(struct lfwm_server *s) {
-    const char *home = getenv("HOME");
-    const char *xdg = getenv("XDG_CONFIG_HOME");
-    char path[1024], pypath[1024], dirpath[1024], sys_path[1024], sys_pypath[1024], sys_dirpath[1024];
+    char path[4096], pypath[4096], dirpath[4096];
+    const char *sys_path = "/etc/lfwm/lfwm.conf";
+    const char *sys_pypath = "/etc/lfwm/lfwm.py";
+    const char *sys_dirpath = "/etc/lfwm/conf.d";
+    bool have_user_paths = conf_user_paths(path, sizeof(path), pypath, sizeof(pypath),
+                                           dirpath, sizeof(dirpath));
 
-    if (xdg) {
-        snprintf(path, sizeof(path), "%s/lfwm/lfwm.conf", xdg);
-        snprintf(pypath, sizeof(pypath), "%s/lfwm/lfwm.py", xdg);
-        snprintf(dirpath, sizeof(dirpath), "%s/lfwm/conf.d", xdg);
-    } else {
-        snprintf(path, sizeof(path), "%s/.config/lfwm/lfwm.conf", home ? home : ".");
-        snprintf(pypath, sizeof(pypath), "%s/.config/lfwm/lfwm.py", home ? home : ".");
-        snprintf(dirpath, sizeof(dirpath), "%s/.config/lfwm/conf.d", home ? home : ".");
-    }
-    snprintf(sys_path, sizeof(sys_path), "/etc/lfwm/lfwm.conf");
-    snprintf(sys_pypath, sizeof(sys_pypath), "/etc/lfwm/lfwm.py");
-    snprintf(sys_dirpath, sizeof(sys_dirpath), "/etc/lfwm/conf.d");
-
-    if (access(path, F_OK) != 0 && access(pypath, F_OK) != 0)
+    if (have_user_paths && access(path, F_OK) != 0 && access(pypath, F_OK) != 0)
         write_default_user_config(path, dirpath);
 
     FILE *f = NULL;
     const char *selected = NULL;
     bool have_python = system("command -v python3 >/dev/null 2>&1") == 0;
 
-    if (access(pypath, F_OK) == 0 && have_python) {
+    if (have_user_paths && access(pypath, F_OK) == 0 && have_python) {
         selected = pypath;
         char cmd[2048];
-        snprintf(cmd, sizeof(cmd), "python3 \"%s\"", selected);
-        f = popen(cmd, "r");
-        if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+        if (conf_python_cmd(cmd, sizeof(cmd), selected)) {
+            f = popen(cmd, "r");
+            if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+        }
     }
 
     if (f) {
@@ -493,21 +635,22 @@ static void lc(struct lfwm_server *s) {
         return;
     }
 
-    if (access(path, F_OK) == 0) {
+    if (have_user_paths && access(path, F_OK) == 0) {
         load_config_path(s, path);
         load_config_dir(s, dirpath);
         return;
     }
 
-    if (load_config_dir(s, dirpath))
+    if (have_user_paths && load_config_dir(s, dirpath))
         return;
 
     if (access(sys_pypath, F_OK) == 0 && have_python) {
         selected = sys_pypath;
         char cmd[2048];
-        snprintf(cmd, sizeof(cmd), "python3 \"%s\"", selected);
-        f = popen(cmd, "r");
-        if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+        if (conf_python_cmd(cmd, sizeof(cmd), selected)) {
+            f = popen(cmd, "r");
+            if (f) fprintf(stderr, "lfwm: loading config from %s\n", selected);
+        }
     }
 
     if (f) {
