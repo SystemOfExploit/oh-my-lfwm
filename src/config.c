@@ -4,7 +4,7 @@ static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
 static unsigned long def_root_bg    = 0x282828;
 static bool  def_bar_enabled        = true;
-static int   def_bar_height         = 26;
+static int   def_bar_height         = 28;
 static unsigned long def_ba         = 0xd79921;
 static unsigned long def_bi         = 0x504945;
 static unsigned long def_bar_bg     = 0x282828;
@@ -17,9 +17,9 @@ static unsigned long def_bar_border = 0x504945;
 static int   def_bar_border_width   = 0;
 static int   def_bar_position       = 0;
 static int   def_bar_padding_x      = 8;
-static int   def_bar_padding_y      = 4;
-static int   def_bar_workspace_gap  = 6;
-static int   def_bar_workspace_pad_x = 8;
+static int   def_bar_padding_y      = 5;
+static int   def_bar_workspace_gap  = 5;
+static int   def_bar_workspace_pad_x = 10;
 static int   def_bar_text_y         = 0;
 static bool  def_bar_show_counts    = true;
 static bool  def_bar_show_layout    = true;
@@ -520,16 +520,16 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set bar_border #504945\n"
         "set bar_border_width 0\n"
         "set bar_padding_x 8\n"
-        "set bar_padding_y 4\n"
-        "set bar_workspace_gap 6\n"
-        "set bar_workspace_pad_x 8\n"
+        "set bar_padding_y 5\n"
+        "set bar_workspace_gap 5\n"
+        "set bar_workspace_pad_x 10\n"
         "set bar_show_counts true\n"
         "set bar_show_layout true\n"
         "set bar_show_status true\n"
         "set bar_status lfwm\n"
         "set gap_in 8\n"
         "set gap_out 12\n"
-        "set bar_height 26\n"
+        "set bar_height 28\n"
         "set smart_borders false\n"
         "set smart_gaps true\n"
         "set modifier SUPER\n"

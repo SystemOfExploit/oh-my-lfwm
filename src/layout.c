@@ -69,10 +69,12 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v, int x, int 
         int sx = v->cx, sy = v->cy, sw = v->cw, sh = v->ch;
         int steps = s->animation_steps;
         for (int i = 1; i <= steps; i++) {
-            int nx = sx + (x - sx) * i / steps;
-            int ny = sy + (y - sy) * i / steps;
-            int nw = sw + (w - sw) * i / steps;
-            int nh = sh + (h - sh) * i / steps;
+            int t = i * 1000 / steps;
+            int ease = 1000 - (1000 - t) * (1000 - t) * (1000 - t) / 1000000;
+            int nx = sx + (x - sx) * ease / 1000;
+            int ny = sy + (y - sy) * ease / 1000;
+            int nw = sw + (w - sw) * ease / 1000;
+            int nh = sh + (h - sh) * ease / 1000;
             if (nw < 1) nw = 1;
             if (nh < 1) nh = 1;
             XMoveResizeWindow(s->dpy, v->win, nx, ny, (unsigned int)nw, (unsigned int)nh);
@@ -108,15 +110,12 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     if (v->w < 1) v->w = 1;
     if (v->h < 1) v->h = 1;
     if (v->floating) {
-        int min_y = workarea_y(s) + s->gap_out;
-        int max_w = ow - s->gap_out * 2;
-        int max_h = workarea_h(s, oh) - s->gap_out * 2;
-        if (max_w < 80) max_w = ow;
-        if (max_h < 40) max_h = workarea_h(s, oh);
-        if (v->w > max_w) v->w = max_w;
-        if (v->h > max_h) v->h = max_h;
-        v->x = clamp_int(v->x, s->gap_out, s->gap_out + max_w - v->w);
-        v->y = clamp_int(v->y, min_y, min_y + max_h - v->h);
+        int area_x, area_y, area_w, area_h;
+        workarea_rect(s, &area_x, &area_y, &area_w, &area_h);
+        if (v->w > area_w) v->w = area_w;
+        if (v->h > area_h) v->h = area_h;
+        v->x = clamp_int(v->x, area_x, area_x + area_w - v->w);
+        v->y = clamp_int(v->y, area_y, area_y + area_h - v->h);
     }
     set_border(s, v, bw);
     set_opacity(s, v);
@@ -127,15 +126,8 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
 }
 
 static void popup_float_geometry(struct lfwm_server *s, struct lfwm_view *v) {
-    int sw, sh;
-    if (!gos(s, &sw, &sh)) return;
-
-    int area_x = s->gap_out;
-    int area_y = workarea_y(s) + s->gap_out;
-    int area_w = sw - s->gap_out * 2;
-    int area_h = workarea_h(s, sh) - s->gap_out * 2;
-    if (area_w < 320) area_w = sw;
-    if (area_h < 200) area_h = workarea_h(s, sh);
+    int area_x, area_y, area_w, area_h;
+    workarea_rect(s, &area_x, &area_y, &area_w, &area_h);
 
     int max_w = area_w * 3 / 4;
     int max_h = area_h * 3 / 4;

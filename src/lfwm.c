@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -139,6 +140,10 @@ struct lfwm_server {
     int animation_steps;
     int animation_delay_ms;
     int animation_max_windows;
+    unsigned long long cpu_total_prev;
+    unsigned long long cpu_idle_prev;
+    bool cpu_sampled;
+    time_t last_bar_refresh;
     time_t config_mtime;
     time_t last_config_check;
     int pending_spawn_ws[32];
@@ -670,15 +675,15 @@ static int workspace_count(struct lfwm_workspace *ws, bool tiled_only) {
     return count;
 }
 
-static const char *layout_name(enum lfwm_layout layout) {
+static const char *layout_label(enum lfwm_layout layout) {
     switch (layout) {
-    case LFW_LAYOUT_MASTER_STACK: return "master";
-    case LFW_LAYOUT_GRID: return "grid";
-    case LFW_LAYOUT_MONOCLE: return "monocle";
-    case LFW_LAYOUT_HORIZ: return "horiz";
-    case LFW_LAYOUT_VERT: return "vert";
-    case LFW_LAYOUT_DWINDLE: return "dwindle";
-    default: return "layout";
+    case LFW_LAYOUT_MASTER_STACK: return "TILE";
+    case LFW_LAYOUT_GRID: return "GRID";
+    case LFW_LAYOUT_MONOCLE: return "MONO";
+    case LFW_LAYOUT_HORIZ: return "HORIZ";
+    case LFW_LAYOUT_VERT: return "VERT";
+    case LFW_LAYOUT_DWINDLE: return "DWIN";
+    default: return "LAYOUT";
     }
 }
 
@@ -702,6 +707,28 @@ static int bar_window_y(struct lfwm_server *s, int screen_h) {
     return y > 0 ? y : 0;
 }
 
+static void workarea_rect(struct lfwm_server *s, int *x, int *y, int *w, int *h) {
+    int sw, sh;
+    if (!gos(s, &sw, &sh)) {
+        *x = *y = 0;
+        *w = *h = 1;
+        return;
+    }
+
+    *x = s->gap_out;
+    *y = workarea_y(s) + s->gap_out;
+    *w = sw - s->gap_out * 2;
+    *h = workarea_h(s, sh) - s->gap_out * 2;
+    if (*w < 80) {
+        *x = 0;
+        *w = sw;
+    }
+    if (*h < 40) {
+        *y = workarea_y(s);
+        *h = workarea_h(s, sh);
+    }
+}
+
 static void update_workarea(struct lfwm_server *s) {
     if (!s->net_workarea) return;
     int sw = DisplayWidth(s->dpy, s->screen);
@@ -718,15 +745,8 @@ static void update_workarea(struct lfwm_server *s) {
 }
 
 static void center_floating_view(struct lfwm_server *s, struct lfwm_view *v, struct lfwm_view *parent) {
-    int sw, sh;
-    if (!gos(s, &sw, &sh)) return;
-
-    int area_x = s->gap_out;
-    int area_y = workarea_y(s) + s->gap_out;
-    int area_w = sw - s->gap_out * 2;
-    int area_h = workarea_h(s, sh) - s->gap_out * 2;
-    if (area_w < 80) area_w = sw;
-    if (area_h < 40) area_h = workarea_h(s, sh);
+    int area_x, area_y, area_w, area_h;
+    workarea_rect(s, &area_x, &area_y, &area_w, &area_h);
 
     if (v->w < 80) v->w = 80;
     if (v->h < 40) v->h = 40;
@@ -831,6 +851,105 @@ static int output_at(struct lfwm_server *s, int x, int y) {
     return 0;
 }
 
+static bool read_first_cpu_sample(unsigned long long *idle, unsigned long long *total) {
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) return false;
+
+    char cpu[8];
+    unsigned long long user, nice, system, idle_v, iowait, irq, softirq, steal;
+    int n = fscanf(f, "%7s %llu %llu %llu %llu %llu %llu %llu %llu",
+                   cpu, &user, &nice, &system, &idle_v, &iowait, &irq, &softirq, &steal);
+    fclose(f);
+    if (n < 8 || strcmp(cpu, "cpu") != 0) return false;
+
+    *idle = idle_v + iowait;
+    *total = user + nice + system + idle_v + iowait + irq + softirq + (n >= 9 ? steal : 0);
+    return true;
+}
+
+static int cpu_percent(struct lfwm_server *s) {
+    unsigned long long idle, total;
+    if (!read_first_cpu_sample(&idle, &total))
+        return -1;
+
+    if (!s->cpu_sampled) {
+        s->cpu_idle_prev = idle;
+        s->cpu_total_prev = total;
+        s->cpu_sampled = true;
+        return 0;
+    }
+
+    unsigned long long idle_delta = idle - s->cpu_idle_prev;
+    unsigned long long total_delta = total - s->cpu_total_prev;
+    s->cpu_idle_prev = idle;
+    s->cpu_total_prev = total;
+    if (total_delta == 0) return 0;
+
+    int pct = (int)((total_delta - idle_delta) * 100 / total_delta);
+    return clamp_int(pct, 0, 100);
+}
+
+static int ram_percent(void) {
+    FILE *f = fopen("/proc/meminfo", "r");
+    if (f) {
+        char line[256], key[64];
+        unsigned long long value, total = 0, available = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (sscanf(line, "%63s %llu", key, &value) != 2)
+                continue;
+            if (strcmp(key, "MemTotal:") == 0) total = value;
+            else if (strcmp(key, "MemAvailable:") == 0) available = value;
+            if (total && available) break;
+        }
+        fclose(f);
+        if (total > 0 && available <= total)
+            return (int)((total - available) * 100 / total);
+    }
+
+    struct sysinfo si;
+    if (sysinfo(&si) != 0 || si.totalram == 0)
+        return -1;
+
+    unsigned long long total = (unsigned long long)si.totalram;
+    unsigned long long freeish = (unsigned long long)si.freeram +
+                                 (unsigned long long)si.bufferram;
+    if (freeish > total) freeish = total;
+    return (int)((total - freeish) * 100 / total);
+}
+
+static bool read_int_file(const char *path, int *value) {
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    int n = fscanf(f, "%d", value);
+    fclose(f);
+    return n == 1;
+}
+
+static int gpu_percent(void) {
+    const char *roots[] = {"/sys/class/drm", "/sys/class/hwmon", NULL};
+    char path[512];
+
+    for (int r = 0; roots[r]; r++) {
+        DIR *dir = opendir(roots[r]);
+        if (!dir) continue;
+
+        struct dirent *de;
+        while ((de = readdir(dir)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+
+            snprintf(path, sizeof(path), "%s/%s/device/gpu_busy_percent", roots[r], de->d_name);
+            int pct;
+            if (read_int_file(path, &pct)) {
+                closedir(dir);
+                return clamp_int(pct, 0, 100);
+            }
+        }
+        closedir(dir);
+    }
+
+    return -1;
+}
+
 static void draw_bar(struct lfwm_server *s) {
     if (!s->bar_enabled) {
         if (s->bar)
@@ -853,36 +972,49 @@ static void draw_bar(struct lfwm_server *s) {
     int x = s->bar_padding_x;
     int item_h = s->bar_h - s->bar_padding_y * 2;
     if (item_h < 1) item_h = 1;
-    int baseline = s->bar_text_y > 0 ? s->bar_text_y : s->bar_h / 2 + 5;
+    int item_y = (s->bar_h - item_h) / 2;
+    int baseline = s->bar_text_y > 0 ? s->bar_text_y : item_y + item_h / 2 + 5;
     if (baseline < 1) baseline = 1;
     if (baseline > s->bar_h - 2) baseline = s->bar_h - 2;
+    int item_w = s->bar_workspace_pad_x * 2 + (s->bar_show_counts ? 5 : 2) * 7;
+    if (item_w < 32) item_w = 32;
 
     for (int i = 0; i < 10; i++) {
         int count = workspace_count(&s->workspaces[i], false);
         char label[32];
         if (s->bar_show_counts && count > 0) snprintf(label, sizeof(label), "%d:%d", i + 1, count);
-        else snprintf(label, sizeof(label), " %d ", i + 1);
-        int w = s->bar_workspace_pad_x * 2 + (int)strlen(label) * 7;
-        if (w < 18) w = 18;
+        else snprintf(label, sizeof(label), "%d", i + 1);
+        int text_w = (int)strlen(label) * 7;
+        int text_x = x + (item_w - text_w) / 2;
         bool active = i == s->current_ws;
         XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active : s->bar_inactive);
-        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, s->bar_padding_y,
-                       (unsigned int)w, (unsigned int)item_h);
+        XFillRectangle(s->dpy, s->bar, s->bar_gc, x, item_y,
+                       (unsigned int)item_w, (unsigned int)item_h);
         XSetForeground(s->dpy, s->bar_gc, active ? s->bar_active_fg : s->bar_inactive_fg);
-        XDrawString(s->dpy, s->bar, s->bar_gc, x + s->bar_workspace_pad_x,
+        XDrawString(s->dpy, s->bar, s->bar_gc, text_x,
                     baseline, label, (int)strlen(label));
-        x += w + s->bar_workspace_gap;
+        x += item_w + s->bar_workspace_gap;
     }
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     char status[512];
     if (s->bar_show_status) {
+        int cpu = cpu_percent(s);
+        int ram = ram_percent();
+        int gpu = gpu_percent();
+        char cpu_s[16], ram_s[16], gpu_s[16];
+        if (cpu >= 0) snprintf(cpu_s, sizeof(cpu_s), "%d%%", cpu);
+        else snprintf(cpu_s, sizeof(cpu_s), "N/A");
+        if (ram >= 0) snprintf(ram_s, sizeof(ram_s), "%d%%", ram);
+        else snprintf(ram_s, sizeof(ram_s), "N/A");
+        if (gpu >= 0) snprintf(gpu_s, sizeof(gpu_s), "%d%%", gpu);
+        else snprintf(gpu_s, sizeof(gpu_s), "N/A");
+
         if (s->bar_show_layout) {
-            snprintf(status, sizeof(status), "%s | ws %d | %s | tiled %d | total %d",
-                     s->bar_status_text, s->current_ws + 1, layout_name(ws->layout),
-                     workspace_count(ws, true), workspace_count(ws, false));
+            snprintf(status, sizeof(status), "%s  CPU: %s  RAM: %s  GPU: %s",
+                     layout_label(ws->layout), cpu_s, ram_s, gpu_s);
         } else {
-            snprintf(status, sizeof(status), "%s | ws %d | total %d",
-                     s->bar_status_text, s->current_ws + 1, workspace_count(ws, false));
+            snprintf(status, sizeof(status), "CPU: %s  RAM: %s  GPU: %s",
+                     cpu_s, ram_s, gpu_s);
         }
         int len = (int)strlen(status);
         int tx = sw - len * 7 - s->bar_padding_x;
@@ -1122,11 +1254,10 @@ static void tm(struct lfwm_server *s, struct lfwm_view *v) {
         v->maximized = false;
     } else {
         v->sv_x = v->x; v->sv_y = v->y; v->sv_w = v->w; v->sv_h = v->h;
-        int ow, oh;
-        if (gos(s, &ow, &oh)) {
-            v->x = s->gap_out; v->y = s->gap_out;
-            v->w = ow - s->gap_out * 2; v->h = oh - s->gap_out * 2;
-        }
+        int area_x, area_y, area_w, area_h;
+        workarea_rect(s, &area_x, &area_y, &area_w, &area_h);
+        v->x = area_x; v->y = area_y;
+        v->w = area_w; v->h = area_h;
         v->floating = true;
         v->maximized = true;
     }
@@ -1347,13 +1478,9 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
         break;
     case LFW_CENTER_FLOAT:
         if (ws->focused) {
-            int ow, oh;
-            if (gos(s, &ow, &oh)) {
-                ws->focused->floating = true;
-                ws->focused->x = (ow - ws->focused->w) / 2;
-                ws->focused->y = (oh - ws->focused->h) / 2;
-                ag(s, ws->focused);
-            }
+            ws->focused->floating = true;
+            center_floating_view(s, ws->focused, NULL);
+            ag(s, ws->focused);
         }
         break;
     case LFW_SWAP_NEXT: swap_with_neighbor(s, true); break;
@@ -1943,6 +2070,15 @@ static void maybe_reload_config(struct lfwm_server *s) {
     }
 }
 
+static void maybe_refresh_bar(struct lfwm_server *s) {
+    time_t now = time(NULL);
+    if (now == s->last_bar_refresh)
+        return;
+    s->last_bar_refresh = now;
+    if (s->bar_enabled)
+        draw_bar(s);
+}
+
 static void handle_event(struct lfwm_server *s, XEvent *ev) {
     switch (ev->type) {
     case MapRequest:
@@ -2043,9 +2179,14 @@ int main(void) {
     init_server(&s);
 
     while (s.running) {
-        XEvent ev;
-        XNextEvent(s.dpy, &ev);
-        handle_event(&s, &ev);
+        while (XPending(s.dpy) > 0) {
+            XEvent ev;
+            XNextEvent(s.dpy, &ev);
+            handle_event(&s, &ev);
+        }
+        maybe_reload_config(&s);
+        maybe_refresh_bar(&s);
+        usleep(50000);
     }
 
     cleanup(&s);
