@@ -38,6 +38,7 @@ enum resize_edge {
 };
 
 #define LFW_POWER_ITEMS 5
+#define LFW_MAX_SEAMS 64
 
 struct lfwm_server;
 struct lfwm_node;
@@ -93,6 +94,8 @@ struct lfwm_server {
     Window bar;
     Window power_menu;
     Window locker;
+    Window seam_windows[LFW_MAX_SEAMS];
+    int seam_count;
     GC bar_gc;
     int bar_h;
     bool running;
@@ -2808,6 +2811,8 @@ static void cleanup(struct lfwm_server *s) {
         if (s->bar_gc) XFreeGC(s->dpy, s->bar_gc);
         if (s->bar) XDestroyWindow(s->dpy, s->bar);
         if (s->power_menu) XDestroyWindow(s->dpy, s->power_menu);
+        for (int i = 0; i < LFW_MAX_SEAMS; i++)
+            if (s->seam_windows[i]) XDestroyWindow(s->dpy, s->seam_windows[i]);
         if (s->locker) XDestroyWindow(s->dpy, s->locker);
         XUngrabKey(s->dpy, AnyKey, AnyModifier, s->root);
         XCloseDisplay(s->dpy);
