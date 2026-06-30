@@ -46,6 +46,28 @@ static void set_border(struct lfwm_server *s, struct lfwm_view *v, int bw) {
     XSetWindowBorderWidth(s->dpy, v->win, (unsigned int)bw);
 }
 
+static void restack_workspace(struct lfwm_server *s, struct lfwm_workspace *ws) {
+    if (!ws) return;
+
+    for (struct lfwm_view *v = ws->head; v; v = v->next) {
+        if (!v->visible || v == ws->focused || v->floating || v->fullscreen)
+            continue;
+        XRaiseWindow(s->dpy, v->win);
+    }
+    if (ws->focused && ws->focused->visible &&
+        !ws->focused->floating && !ws->focused->fullscreen)
+        XRaiseWindow(s->dpy, ws->focused->win);
+
+    for (struct lfwm_view *v = ws->head; v; v = v->next) {
+        if (!v->visible || v == ws->focused || (!v->floating && !v->fullscreen))
+            continue;
+        XRaiseWindow(s->dpy, v->win);
+    }
+    if (ws->focused && ws->focused->visible &&
+        (ws->focused->floating || ws->focused->fullscreen))
+        XRaiseWindow(s->dpy, ws->focused->win);
+}
+
 static void set_opacity(struct lfwm_server *s, struct lfwm_view *v) {
     if (!s->net_wm_window_opacity) return;
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
@@ -148,6 +170,7 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     int px = v->floating ? v->x : v->x + s->layout_x;
     int py = v->floating ? v->y : v->y + s->layout_y;
     place_window(s, v, px, py, v->w, v->h, bw);
+    set_border(s, v, bw);
     if (v->floating)
         XRaiseWindow(s->dpy, v->win);
 }
@@ -440,6 +463,7 @@ static void aw(struct lfwm_server *s) {
         }
     }
     aff(s, ws);
+    restack_workspace(s, ws);
     draw_bar(s);
     XFlush(s->dpy);
 }

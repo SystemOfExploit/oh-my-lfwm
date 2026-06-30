@@ -758,15 +758,15 @@ static bool output_rect_at(struct lfwm_server *s, int px, int py,
 }
 
 static void active_output_rect(struct lfwm_server *s, int *x, int *y, int *w, int *h) {
+    struct lfwm_view *v = s->workspaces[s->current_ws].focused;
+    if (v && output_rect_at(s, v->cx + v->cw / 2, v->cy + v->ch / 2, x, y, w, h))
+        return;
+
     Window rr, cr;
     int rx, ry, wx, wy;
     unsigned int mask;
     if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask) &&
         output_rect_at(s, rx, ry, x, y, w, h))
-        return;
-
-    struct lfwm_view *v = s->workspaces[s->current_ws].focused;
-    if (v && output_rect_at(s, v->cx + v->cw / 2, v->cy + v->ch / 2, x, y, w, h))
         return;
 
     (void)output_rect_at(s, 0, 0, x, y, w, h);
