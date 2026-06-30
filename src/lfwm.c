@@ -126,6 +126,8 @@ struct lfwm_server {
     int animation_delay_ms;
     time_t config_mtime;
     time_t last_config_check;
+    int pending_spawn_ws;
+    time_t pending_spawn_until;
 
     Atom wm_protocols;
     Atom wm_delete_window;
@@ -177,6 +179,16 @@ static struct lfwm_view *target_view(struct lfwm_server *s);
 
 static void ba(struct lfwm_server *s, unsigned int m, KeySym k,
                enum lfwm_action a, int arg, const char *c) {
+    for (int i = 0; i < s->bc; i++) {
+        if (s->bindings[i].mods == m && s->bindings[i].sym == k) {
+            free(s->bindings[i].spawn_cmd);
+            s->bindings[i].action = a;
+            s->bindings[i].arg = arg;
+            s->bindings[i].spawn_cmd = c ? strdup(c) : NULL;
+            return;
+        }
+    }
+
     if (s->bc >= s->bcap) {
         s->bcap = s->bcap ? s->bcap * 2 : 32;
         s->bindings = realloc(s->bindings, (size_t)s->bcap * sizeof(*s->bindings));
@@ -190,21 +202,26 @@ static void ba(struct lfwm_server *s, unsigned int m, KeySym k,
     b->spawn_cmd = c ? strdup(c) : NULL;
 }
 
-static bool has_binding_action(struct lfwm_server *s, unsigned int mods, KeySym sym,
-                               enum lfwm_action action) {
-    for (int i = 0; i < s->bc; i++)
-        if (s->bindings[i].mods == mods && s->bindings[i].sym == sym &&
-            s->bindings[i].action == action)
+static bool set_binding_action(struct lfwm_server *s, unsigned int mods, KeySym sym,
+                               enum lfwm_action action, int arg) {
+    for (int i = 0; i < s->bc; i++) {
+        if (s->bindings[i].mods == mods && s->bindings[i].sym == sym) {
+            free(s->bindings[i].spawn_cmd);
+            s->bindings[i].action = action;
+            s->bindings[i].arg = arg;
+            s->bindings[i].spawn_cmd = NULL;
             return true;
+        }
+    }
     return false;
 }
 
 static void ensure_core_bindings(struct lfwm_server *s) {
-    if (!has_binding_action(s, Mod4Mask, XK_x, LFW_TOGGLE_FLOAT))
+    if (!set_binding_action(s, Mod4Mask, XK_x, LFW_TOGGLE_FLOAT, 0))
         ba(s, Mod4Mask, XK_x, LFW_TOGGLE_FLOAT, 0, NULL);
-    if (!has_binding_action(s, Mod4Mask, XK_Right, LFW_WS_NEXT))
+    if (!set_binding_action(s, Mod4Mask, XK_Right, LFW_WS_NEXT, 0))
         ba(s, Mod4Mask, XK_Right, LFW_WS_NEXT, 0, NULL);
-    if (!has_binding_action(s, Mod4Mask, XK_Left, LFW_WS_PREV))
+    if (!set_binding_action(s, Mod4Mask, XK_Left, LFW_WS_PREV, 0))
         ba(s, Mod4Mask, XK_Left, LFW_WS_PREV, 0, NULL);
 }
 
@@ -815,7 +832,6 @@ static void hide_workspace(struct lfwm_server *s, int idx) {
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
         v->ignore_unmap++;
         XUnmapWindow(s->dpy, v->win);
-        v->mapped = false;
     }
 }
 
@@ -846,7 +862,7 @@ static void focus_dir(struct lfwm_server *s, bool next) {
 static void focus_master(struct lfwm_server *s) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        if (v->mapped && !v->floating && !v->fullscreen) {
+        if (!v->floating && !v->fullscreen) {
             fv(s, v);
             return;
         }
@@ -911,7 +927,6 @@ static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
     } else if (was_current) {
         v->ignore_unmap++;
         XUnmapWindow(s->dpy, v->win);
-        v->mapped = false;
         aw(s);
     } else if (new_ws == &s->workspaces[s->current_ws]) {
         XMapWindow(s->dpy, v->win);
@@ -1039,7 +1054,11 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
     int step;
     switch (b->action) {
     case LFW_SPAWN:
-        if (b->spawn_cmd) spawn_cmd(b->spawn_cmd);
+        if (b->spawn_cmd) {
+            s->pending_spawn_ws = s->current_ws;
+            s->pending_spawn_until = time(NULL) + 8;
+            spawn_cmd(b->spawn_cmd);
+        }
         break;
     case LFW_CLOSE: close_focused(s); break;
     case LFW_FOCUS_NEXT: focus_dir(s, true); break;
@@ -1158,6 +1177,16 @@ static void manage_window(struct lfwm_server *s, Window win) {
         return;
 
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
+    time_t now = time(NULL);
+    if (s->pending_spawn_ws >= 0 && s->pending_spawn_ws < 10 &&
+        s->pending_spawn_until >= now) {
+        ws = &s->workspaces[s->pending_spawn_ws];
+        s->pending_spawn_ws = -1;
+        s->pending_spawn_until = 0;
+    } else if (s->pending_spawn_ws >= 0 && s->pending_spawn_until < now) {
+        s->pending_spawn_ws = -1;
+        s->pending_spawn_until = 0;
+    }
     struct lfwm_view *v = calloc(1, sizeof(*v));
     if (!v) abort();
     v->server = s;
@@ -1236,7 +1265,6 @@ static void manage_window(struct lfwm_server *s, Window win) {
     } else {
         v->ignore_unmap++;
         XUnmapWindow(s->dpy, win);
-        v->mapped = false;
     }
     update_client_list(s);
 }
@@ -1310,6 +1338,8 @@ static void detach_dragged_view(struct lfwm_server *s) {
 
     v->floating = true;
     v->force_floating = true;
+    if (v->node)
+        bsp_remove(v->ws, v);
     if (s->dragging && s->drag_view == v) {
         s->drag_was_floating = true;
         s->drag_temp_floating = false;
@@ -1320,7 +1350,7 @@ static void detach_dragged_view(struct lfwm_server *s) {
 
 static struct lfwm_view *target_view(struct lfwm_server *s) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
-    if (ws->focused && ws->focused->ws == ws && ws->focused->mapped)
+    if (ws->focused && ws->focused->ws == ws)
         return ws->focused;
 
     Window rr, cr;
@@ -1419,9 +1449,21 @@ static void end_drag(struct lfwm_server *s) {
         int output = output_at(s, v->x + v->w / 2, v->y + v->h / 2);
         if (output == s->drag_start_output) {
             v->floating = false;
+            if (!v->node) {
+                struct lfwm_view *anchor = NULL;
+                for (struct lfwm_view *it = v->ws->head; it; it = it->next) {
+                    if (it != v && it->node && !it->floating && !it->fullscreen) {
+                        anchor = it;
+                        break;
+                    }
+                }
+                bsp_insert(v->ws, anchor, v, true, false);
+            }
             relayout = true;
         } else {
             v->force_floating = true;
+            if (v->node)
+                bsp_remove(v->ws, v);
         }
     }
     s->dragging = false;
@@ -1539,6 +1581,8 @@ static void init_server(struct lfwm_server *s) {
     s->root = RootWindow(s->dpy, s->screen);
     s->running = true;
     s->current_ws = 0;
+    s->pending_spawn_ws = -1;
+    s->pending_spawn_until = 0;
 
     for (int i = 0; i < 10; i++) {
         s->workspaces[i].head = NULL;

@@ -10,7 +10,6 @@ static void aw(struct lfwm_server *s);
 static int view_count(struct lfwm_workspace *ws, bool tiled_only) {
     int n = 0;
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        if (!v->mapped) continue;
         if (tiled_only && (v->floating || v->fullscreen)) continue;
         n++;
     }
@@ -20,7 +19,7 @@ static int view_count(struct lfwm_workspace *ws, bool tiled_only) {
 static struct lfwm_view *va(struct lfwm_server *s, int x, int y) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     for (struct lfwm_view *v = ws->tail; v; v = v->prev) {
-        if (v->mapped && x >= v->cx && x < v->cx + v->cw &&
+        if (x >= v->cx && x < v->cx + v->cw &&
             y >= v->cy && y < v->cy + v->ch) {
             return v;
         }
@@ -80,7 +79,7 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v, int x, int 
 }
 
 static void ag(struct lfwm_server *s, struct lfwm_view *v) {
-    if (!v || !v->mapped) return;
+    if (!v) return;
 
     int ow, oh;
     if (!gos(s, &ow, &oh)) return;
@@ -123,6 +122,8 @@ static void tf(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v || v->fullscreen) return;
 
     if (!v->floating) {
+        if (v->node)
+            bsp_remove(v->ws, v);
         if (v->configured) {
             v->x = v->cx;
             v->y = v->cy;
@@ -136,7 +137,7 @@ static void tf(struct lfwm_server *s, struct lfwm_view *v) {
         v->force_floating = false;
     }
 
-    if (!v->floating && !v->node) {
+    if (!v->floating) {
         struct lfwm_view *anchor = NULL;
         for (struct lfwm_view *it = v->ws->head; it; it = it->next) {
             if (it != v && it->node && !it->floating && !it->fullscreen) {
@@ -144,7 +145,8 @@ static void tf(struct lfwm_server *s, struct lfwm_view *v) {
                 break;
             }
         }
-        bsp_insert(v->ws, anchor, v, true, false);
+        if (!v->node)
+            bsp_insert(v->ws, anchor, v, true, false);
     }
     if (v->floating && v->maximized) v->maximized = false;
     aw(s);
@@ -183,7 +185,7 @@ static int ct(struct lfwm_workspace *ws) {
 static void each_tiled(struct lfwm_workspace *ws, void (*fn)(struct lfwm_view *, int, void *), void *data) {
     int idx = 0;
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        if (!v->mapped || v->floating || v->fullscreen) continue;
+        if (v->floating || v->fullscreen) continue;
         fn(v, idx++, data);
     }
 }
@@ -307,7 +309,7 @@ static void avt(struct lfwm_server *s, struct lfwm_workspace *ws,
 
 static bool subtree_has_tiled(struct lfwm_node *n) {
     if (!n) return false;
-    if (n->view) return n->view->mapped && !n->view->floating && !n->view->fullscreen;
+    if (n->view) return !n->view->floating && !n->view->fullscreen;
     return subtree_has_tiled(n->first) || subtree_has_tiled(n->second);
 }
 
@@ -316,7 +318,7 @@ static void layout_bsp_node(struct lfwm_server *s, struct lfwm_node *n,
     if (!n || w <= 0 || h <= 0) return;
     if (n->view) {
         struct lfwm_view *v = n->view;
-        if (!v->mapped || v->floating || v->fullscreen) return;
+        if (v->floating || v->fullscreen) return;
         v->x = x; v->y = y; v->w = w; v->h = h;
         ag(s, v);
         return;
@@ -352,7 +354,7 @@ static void adw(struct lfwm_server *s, struct lfwm_workspace *ws,
 }
 static void aff(struct lfwm_server *s, struct lfwm_workspace *ws) {
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        if (v->mapped && (v->floating || v->fullscreen))
+        if (v->floating || v->fullscreen)
             ag(s, v);
     }
 }
