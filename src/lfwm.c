@@ -1149,10 +1149,12 @@ static void draw_bar(struct lfwm_server *s) {
     XFontStruct *font = XQueryFont(s->dpy, XGContextFromGC(s->bar_gc));
     int char_w = font ? XTextWidth(font, "0", 1) : 7;
     if (char_w < 1) char_w = 7;
-    int text_h = font ? font->ascent + font->descent : 12;
-    int baseline = s->bar_text_y > 0 ? s->bar_text_y : (s->bar_h - text_h) / 2 + (font ? font->ascent : 10);
-    if (baseline < 1) baseline = 1;
-    if (baseline > s->bar_h - 2) baseline = s->bar_h - 2;
+    int ascent = font ? font->ascent : 10;
+    int descent = font ? font->descent : 2;
+    int text_h = ascent + descent;
+    int baseline = s->bar_text_y > 0 ? s->bar_text_y : (s->bar_h - text_h) / 2 + ascent;
+    if (baseline < ascent) baseline = ascent;
+    if (baseline > s->bar_h - descent) baseline = s->bar_h - descent;
     int item_w = s->bar_workspace_pad_x * 2 + (s->bar_show_counts ? 5 : 2) * char_w;
     if (item_w < 32) item_w = 32;
 

@@ -119,7 +119,13 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v,
         int steps = s->animation_steps;
         for (int i = 1; i <= steps; i++) {
             int t = i * 1000 / steps;
-            int ease = 1000 - (1000 - t) * (1000 - t) * (1000 - t) / 1000000;
+            int ease;
+            if (t < 500) {
+                ease = (int)(4LL * t * t * t / 1000000LL);
+            } else {
+                int u = 2000 - 2 * t;
+                ease = 1000 - (int)((long long)u * u * u / 2000000LL);
+            }
             int nx = sx + (x - sx) * ease / 1000;
             int ny = sy + (y - sy) * ease / 1000;
             int nw = sw + (w - sw) * ease / 1000;

@@ -4,7 +4,7 @@ static int   def_gap_in             = 4;
 static int   def_gap_out            = 8;
 static unsigned long def_root_bg    = 0x282828;
 static bool  def_bar_enabled        = true;
-static int   def_bar_height         = 28;
+static int   def_bar_height         = 30;
 static unsigned long def_ba         = 0xd79921;
 static unsigned long def_bi         = 0x504945;
 static unsigned long def_bar_bg     = 0x282828;
@@ -17,9 +17,9 @@ static unsigned long def_bar_border = 0x504945;
 static int   def_bar_border_width   = 0;
 static int   def_bar_position       = 0;
 static int   def_bar_padding_x      = 8;
-static int   def_bar_padding_y      = 5;
-static int   def_bar_workspace_gap  = 5;
-static int   def_bar_workspace_pad_x = 10;
+static int   def_bar_padding_y      = 4;
+static int   def_bar_workspace_gap  = 6;
+static int   def_bar_workspace_pad_x = 12;
 static int   def_bar_text_y         = 0;
 static bool  def_bar_show_counts    = true;
 static bool  def_bar_show_layout    = true;
@@ -42,8 +42,8 @@ static float def_opacity_active     = 0.96f;
 static float def_opacity_inactive   = 0.88f;
 static float def_opacity_drag       = 0.72f;
 static bool  def_animations         = true;
-static int   def_animation_steps    = 8;
-static int   def_animation_delay_ms = 2;
+static int   def_animation_steps    = 12;
+static int   def_animation_delay_ms = 1;
 static int   def_animation_max_windows = 6;
 
 static int   dwl[10];
@@ -532,9 +532,9 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set bar_border #504945\n"
         "set bar_border_width 0\n"
         "set bar_padding_x 8\n"
-        "set bar_padding_y 5\n"
-        "set bar_workspace_gap 5\n"
-        "set bar_workspace_pad_x 10\n"
+        "set bar_padding_y 4\n"
+        "set bar_workspace_gap 6\n"
+        "set bar_workspace_pad_x 12\n"
         "set bar_show_counts true\n"
         "set bar_show_layout true\n"
         "set bar_show_status true\n"
@@ -543,7 +543,7 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set bar_datetime_format %%Y-%%m-%%d %%H:%%M\n"
         "set gap_in 8\n"
         "set gap_out 12\n"
-        "set bar_height 28\n"
+        "set bar_height 30\n"
         "set smart_borders false\n"
         "set smart_gaps true\n"
         "set modifier SUPER\n"
@@ -556,8 +556,8 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "set inactive_opacity 0.88\n"
         "set drag_opacity 0.72\n"
         "set animations true\n"
-        "set animation_steps 8\n"
-        "set animation_delay_ms 2\n"
+        "set animation_steps 12\n"
+        "set animation_delay_ms 1\n"
         "set animation_max_windows 6\n"
         "set master_ratio 0.50\n"
         "set master_count 1\n"
