@@ -118,6 +118,33 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
         XRaiseWindow(s->dpy, v->win);
 }
 
+static void popup_float_geometry(struct lfwm_server *s, struct lfwm_view *v) {
+    int sw, sh;
+    if (!gos(s, &sw, &sh)) return;
+
+    int area_x = s->gap_out;
+    int area_y = s->bar_h + s->gap_out;
+    int area_w = sw - s->gap_out * 2;
+    int area_h = sh - s->bar_h - s->gap_out * 2;
+    if (area_w < 320) area_w = sw;
+    if (area_h < 200) area_h = sh - s->bar_h;
+
+    int max_w = area_w * 3 / 4;
+    int max_h = area_h * 3 / 4;
+    int min_w = area_w < 900 ? area_w * 4 / 5 : 720;
+    int min_h = area_h < 700 ? area_h * 4 / 5 : 480;
+    if (min_w < 320) min_w = area_w;
+    if (min_h < 200) min_h = area_h;
+
+    bool too_large = v->w > max_w || v->h > max_h;
+    if (too_large || v->w < 80 || v->h < 40) {
+        v->w = min_w < max_w ? min_w : max_w;
+        v->h = min_h < max_h ? min_h : max_h;
+        v->x = area_x + (area_w - v->w) / 2;
+        v->y = area_y + (area_h - v->h) / 2;
+    }
+}
+
 static void tf(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v || v->fullscreen) return;
 
@@ -130,6 +157,7 @@ static void tf(struct lfwm_server *s, struct lfwm_view *v) {
             v->w = v->cw;
             v->h = v->ch;
         }
+        popup_float_geometry(s, v);
         v->floating = true;
         v->force_floating = true;
     } else {

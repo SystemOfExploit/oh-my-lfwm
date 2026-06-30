@@ -45,6 +45,7 @@ struct lfwm_view {
     struct lfwm_view *prev;
     struct lfwm_view *next;
     bool mapped;
+    bool visible;
     bool floating;
     bool fullscreen;
     bool maximized;
@@ -822,16 +823,21 @@ static void grab_keys(struct lfwm_server *s) {
 static void show_workspace(struct lfwm_server *s, int idx) {
     struct lfwm_workspace *ws = &s->workspaces[idx];
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        XMapWindow(s->dpy, v->win);
-        v->mapped = true;
+        if (!v->visible) {
+            XMapWindow(s->dpy, v->win);
+            v->visible = true;
+        }
     }
 }
 
 static void hide_workspace(struct lfwm_server *s, int idx) {
     struct lfwm_workspace *ws = &s->workspaces[idx];
     for (struct lfwm_view *v = ws->head; v; v = v->next) {
-        v->ignore_unmap++;
-        XUnmapWindow(s->dpy, v->win);
+        if (v->visible) {
+            v->ignore_unmap++;
+            XUnmapWindow(s->dpy, v->win);
+            v->visible = false;
+        }
     }
 }
 
@@ -925,12 +931,17 @@ static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
     if (st) {
         wss(s, ws);
     } else if (was_current) {
-        v->ignore_unmap++;
-        XUnmapWindow(s->dpy, v->win);
+        if (v->visible) {
+            v->ignore_unmap++;
+            XUnmapWindow(s->dpy, v->win);
+            v->visible = false;
+        }
         aw(s);
     } else if (new_ws == &s->workspaces[s->current_ws]) {
-        XMapWindow(s->dpy, v->win);
-        v->mapped = true;
+        if (!v->visible) {
+            XMapWindow(s->dpy, v->win);
+            v->visible = true;
+        }
         aw(s);
     }
 }
@@ -1175,6 +1186,7 @@ static void manage_window(struct lfwm_server *s, Window win) {
         return;
     if (wa.map_state == IsUnmapped && wa.width <= 1 && wa.height <= 1)
         return;
+    bool was_viewable = wa.map_state == IsViewable;
 
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     time_t now = time(NULL);
@@ -1193,6 +1205,7 @@ static void manage_window(struct lfwm_server *s, Window win) {
     v->win = win;
     v->ws = ws;
     v->mapped = true;
+    v->visible = was_viewable;
     v->x = wa.x; v->y = wa.y;
     v->w = wa.width > 1 ? wa.width : 800;
     v->h = wa.height > 1 ? wa.height : 600;
@@ -1261,10 +1274,12 @@ static void manage_window(struct lfwm_server *s, Window win) {
 
     if (v->ws == &s->workspaces[s->current_ws]) {
         XMapRaised(s->dpy, win);
+        v->visible = true;
         fv(s, v);
-    } else {
+    } else if (v->visible) {
         v->ignore_unmap++;
         XUnmapWindow(s->dpy, win);
+        v->visible = false;
     }
     update_client_list(s);
 }
