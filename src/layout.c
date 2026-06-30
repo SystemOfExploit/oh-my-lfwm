@@ -110,6 +110,9 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v,
     if (animate && s->animation_max_windows > 0 &&
         view_count(&s->workspaces[s->current_ws], false) > s->animation_max_windows)
         animate = false;
+    if (animate && abs(x - v->cx) <= 1 && abs(y - v->cy) <= 1 &&
+        abs(w - v->cw) <= 1 && abs(h - v->ch) <= 1)
+        animate = false;
 
     if (!animate) {
         XMoveResizeWindow(s->dpy, v->win, x, y,

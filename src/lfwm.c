@@ -1553,11 +1553,31 @@ static void show_power_menu(struct lfwm_server *s) {
     draw_power_menu(s);
 }
 
+static void power_menu_activate(struct lfwm_server *s, int choice) {
+    hide_power_menu(s);
+    if (choice == 0) spawn_cmd("systemctl poweroff || loginctl poweroff", -1);
+    else if (choice == 1) spawn_cmd("systemctl reboot || loginctl reboot", -1);
+    else if (choice == 2) spawn_cmd("systemctl suspend || loginctl suspend", -1);
+    else if (choice == 3) show_locker(s);
+    else if (choice == 4) s->running = false;
+}
+
 static bool power_menu_handle_key(struct lfwm_server *s, XKeyEvent *ev) {
     if (!s->power_menu || ev->window != s->power_menu) return false;
     KeySym sym = XLookupKeysym(ev, 0);
-    if (sym == XK_Escape || sym == XK_q || sym == XK_m)
+    if (sym == XK_Escape || sym == XK_q || sym == XK_m) {
         hide_power_menu(s);
+    } else if (sym == XK_1 || sym == XK_p || sym == XK_P) {
+        power_menu_activate(s, 0);
+    } else if (sym == XK_2 || sym == XK_r || sym == XK_R) {
+        power_menu_activate(s, 1);
+    } else if (sym == XK_3 || sym == XK_s || sym == XK_S) {
+        power_menu_activate(s, 2);
+    } else if (sym == XK_4 || sym == XK_l || sym == XK_L) {
+        power_menu_activate(s, 3);
+    } else if (sym == XK_5 || sym == XK_e || sym == XK_E) {
+        power_menu_activate(s, 4);
+    }
     return true;
 }
 
@@ -1574,12 +1594,7 @@ static bool power_menu_handle_button(struct lfwm_server *s, XButtonEvent *ev) {
         }
     }
 
-    hide_power_menu(s);
-    if (choice == 0) spawn_cmd("systemctl poweroff || loginctl poweroff", -1);
-    else if (choice == 1) spawn_cmd("systemctl reboot || loginctl reboot", -1);
-    else if (choice == 2) spawn_cmd("systemctl suspend || loginctl suspend", -1);
-    else if (choice == 3) show_locker(s);
-    else if (choice == 4) s->running = false;
+    power_menu_activate(s, choice);
     return true;
 }
 
@@ -1678,13 +1693,15 @@ static void fv(struct lfwm_server *s, struct lfwm_view *v) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
     if (v->ws != ws) return;
 
+    bool changed = ws->focused != v;
     ws->focused = v;
     XSetInputFocus(s->dpy, v->win, RevertToPointerRoot, CurrentTime);
     if (v->floating || v->fullscreen)
         XRaiseWindow(s->dpy, v->win);
     XChangeProperty(s->dpy, s->root, s->net_active_window, XA_WINDOW, 32,
                     PropModeReplace, (unsigned char *)&v->win, 1);
-    aw(s);
+    if (changed)
+        aw(s);
 }
 
 static void focus_dir(struct lfwm_server *s, bool next) {
