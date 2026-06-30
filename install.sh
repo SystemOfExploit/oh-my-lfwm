@@ -35,8 +35,6 @@ install_deps() {
         dnf install -y gcc make pkgconf-pkg-config libX11-devel libXinerama-devel xorg-x11-server-Xorg xorg-x11-xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v zypper >/dev/null 2>&1; then
         zypper install -y gcc make pkg-config libX11-devel libXinerama-devel xorg-x11-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
-    elif command -v apk >/dev/null 2>&1; then
-        apk add build-base pkgconf libx11-dev libxinerama-dev xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v xbps-install >/dev/null 2>&1; then
         xbps-install -Sy gcc make pkg-config libX11-devel libXinerama-devel xorg-server xinit xsetroot xterm kitty firefox thunar pavucontrol feh dunst picom
     elif command -v emerge >/dev/null 2>&1; then
