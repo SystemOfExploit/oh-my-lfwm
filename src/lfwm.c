@@ -608,17 +608,17 @@ static time_t config_file_mtime(void) {
 
     if (stat("/etc/lfwm/lfwm.conf", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
     if (stat("/etc/lfwm/lfwm.py", &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
-    dir = opendir("/etc/lfwm/conf.d");
-    if (dir) {
+    DIR *sys_dir = opendir("/etc/lfwm/conf.d");
+    if (sys_dir) {
         struct dirent *de;
-        while ((de = readdir(dir)) != NULL) {
+        while ((de = readdir(sys_dir)) != NULL) {
             size_t len = strlen(de->d_name);
             if (len < 6 || strcmp(de->d_name + len - 5, ".conf") != 0) continue;
             if (!conf_join_path(child, sizeof(child), "/etc/lfwm/conf.d", de->d_name))
                 continue;
             if (stat(child, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
         }
-        closedir(dir);
+        closedir(sys_dir);
     }
     return newest;
 }
