@@ -87,6 +87,7 @@ struct lfwm_server {
     int screen;
     Window root;
     Window bar;
+    Window power_menu;
     GC bar_gc;
     int bar_h;
     bool running;
@@ -105,6 +106,8 @@ struct lfwm_server {
     int bw_inactive;
     int gap_in;
     int gap_out;
+    int layout_x;
+    int layout_y;
     unsigned long root_bg;
     unsigned long ba;
     unsigned long bi;
@@ -149,6 +152,7 @@ struct lfwm_server {
     int pending_spawn_ws[32];
     time_t pending_spawn_until[32];
     int pending_spawn_count;
+    int power_rects[4][4];
 
     Atom wm_protocols;
     Atom wm_delete_window;
@@ -193,7 +197,6 @@ static void tf(struct lfwm_server *s, struct lfwm_view *v);
 static void tfs(struct lfwm_server *s, struct lfwm_view *v);
 static void ag(struct lfwm_server *s, struct lfwm_view *v);
 static struct lfwm_view *va(struct lfwm_server *s, int x, int y);
-static bool gos(struct lfwm_server *s, int *w, int *h);
 static void draw_bar(struct lfwm_server *s);
 static char *get_window_class(struct lfwm_server *s, Window win);
 static void detach_dragged_view(struct lfwm_server *s);
@@ -245,6 +248,10 @@ static void ensure_core_bindings(struct lfwm_server *s) {
         ba(s, Mod4Mask, XK_Right, LFW_WS_NEXT, 0, NULL);
     if (!set_binding_action(s, Mod4Mask, XK_Left, LFW_WS_PREV, 0))
         ba(s, Mod4Mask, XK_Left, LFW_WS_PREV, 0, NULL);
+    if (!set_binding_action(s, def_mod, XK_m, LFW_POWER_MENU, 0))
+        ba(s, def_mod, XK_m, LFW_POWER_MENU, 0, NULL);
+    if (!set_binding_action(s, def_mod | ShiftMask, XK_m, LFW_TOGGLE_MAXIMIZE, 0))
+        ba(s, def_mod | ShiftMask, XK_m, LFW_TOGGLE_MAXIMIZE, 0, NULL);
 }
 
 static void ra(struct lfwm_server *s, const char *a, const char *t,
@@ -708,25 +715,84 @@ static int bar_window_y(struct lfwm_server *s, int screen_h) {
     return y > 0 ? y : 0;
 }
 
+static bool output_rect_at(struct lfwm_server *s, int px, int py,
+                           int *x, int *y, int *w, int *h) {
+#ifdef LFW_WITH_XINERAMA
+    int event_base = 0, error_base = 0;
+    if (XineramaQueryExtension(s->dpy, &event_base, &error_base) &&
+        XineramaIsActive(s->dpy)) {
+        int count = 0;
+        XineramaScreenInfo *screens = XineramaQueryScreens(s->dpy, &count);
+        if (screens && count > 0) {
+            int chosen = 0;
+            for (int i = 0; i < count; i++) {
+                int sx = screens[i].x_org;
+                int sy = screens[i].y_org;
+                int sw = screens[i].width;
+                int sh = screens[i].height;
+                if (px >= sx && px < sx + sw && py >= sy && py < sy + sh) {
+                    chosen = i;
+                    break;
+                }
+            }
+            *x = screens[chosen].x_org;
+            *y = screens[chosen].y_org;
+            *w = screens[chosen].width;
+            *h = screens[chosen].height;
+            XFree(screens);
+            return *w > 0 && *h > 0;
+        }
+        if (screens) XFree(screens);
+    }
+#else
+    (void)px;
+    (void)py;
+#endif
+    *x = 0;
+    *y = 0;
+    *w = DisplayWidth(s->dpy, s->screen);
+    *h = DisplayHeight(s->dpy, s->screen);
+    return *w > 0 && *h > 0;
+}
+
+static void active_output_rect(struct lfwm_server *s, int *x, int *y, int *w, int *h) {
+    Window rr, cr;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    if (XQueryPointer(s->dpy, s->root, &rr, &cr, &rx, &ry, &wx, &wy, &mask) &&
+        output_rect_at(s, rx, ry, x, y, w, h))
+        return;
+
+    struct lfwm_view *v = s->workspaces[s->current_ws].focused;
+    if (v && output_rect_at(s, v->cx + v->cw / 2, v->cy + v->ch / 2, x, y, w, h))
+        return;
+
+    (void)output_rect_at(s, 0, 0, x, y, w, h);
+}
+
 static void workarea_rect(struct lfwm_server *s, int *x, int *y, int *w, int *h) {
-    int sw, sh;
-    if (!gos(s, &sw, &sh)) {
+    int ox, oy, ow, oh;
+    active_output_rect(s, &ox, &oy, &ow, &oh);
+    if (ow <= 0 || oh <= 0) {
         *x = *y = 0;
         *w = *h = 1;
         return;
     }
 
-    *x = s->gap_out;
-    *y = workarea_y(s) + s->gap_out;
-    *w = sw - s->gap_out * 2;
-    *h = workarea_h(s, sh) - s->gap_out * 2;
+    int top_bar = s->bar_enabled && s->bar_position == 0 && oy == 0 ? s->bar_h : 0;
+    int bottom_bar = s->bar_enabled && s->bar_position == 1 &&
+                     oy + oh >= DisplayHeight(s->dpy, s->screen) ? s->bar_h : 0;
+    *x = ox + s->gap_out;
+    *y = oy + top_bar + s->gap_out;
+    *w = ow - s->gap_out * 2;
+    *h = oh - top_bar - bottom_bar - s->gap_out * 2;
     if (*w < 80) {
-        *x = 0;
-        *w = sw;
+        *x = ox;
+        *w = ow;
     }
     if (*h < 40) {
-        *y = workarea_y(s);
-        *h = workarea_h(s, sh);
+        *y = oy + top_bar;
+        *h = oh - top_bar - bottom_bar;
     }
 }
 
@@ -1049,6 +1115,132 @@ static void setup_bar(struct lfwm_server *s) {
     s->bar_gc = XCreateGC(s->dpy, s->bar, 0, NULL);
     XMapRaised(s->dpy, s->bar);
     draw_bar(s);
+}
+
+static void hide_power_menu(struct lfwm_server *s) {
+    if (!s->power_menu) return;
+    XUngrabKeyboard(s->dpy, CurrentTime);
+    XUngrabPointer(s->dpy, CurrentTime);
+    XUnmapWindow(s->dpy, s->power_menu);
+}
+
+static void draw_power_menu(struct lfwm_server *s) {
+    if (!s->power_menu) return;
+
+    int ox, oy, ow, oh;
+    active_output_rect(s, &ox, &oy, &ow, &oh);
+    XMoveResizeWindow(s->dpy, s->power_menu, ox, oy,
+                      (unsigned int)ow, (unsigned int)oh);
+
+    GC gc = s->bar_gc ? s->bar_gc : DefaultGC(s->dpy, s->screen);
+    XSetForeground(s->dpy, gc, 0x050505);
+    XFillRectangle(s->dpy, s->power_menu, gc, 0, 0,
+                   (unsigned int)ow, (unsigned int)oh);
+
+    const char *labels[] = {"ShutDown", "Reboot", "Sleep", "Logout"};
+    const char *title = "Power";
+    int cols = ow >= 760 ? 4 : 2;
+    int rows = cols == 4 ? 1 : 2;
+    int gap = 18;
+    int tile = ow / (cols == 4 ? 7 : 4);
+    if (tile > 160) tile = 160;
+    if (tile < 96) tile = 96;
+    if (tile * cols + gap * (cols - 1) > ow - 40)
+        tile = (ow - 40 - gap * (cols - 1)) / cols;
+    if (tile * rows + gap * (rows - 1) > oh - 120)
+        tile = (oh - 120 - gap * (rows - 1)) / rows;
+    if (tile < 64) tile = 64;
+
+    int total_w = tile * cols + gap * (cols - 1);
+    int total_h = tile * rows + gap * (rows - 1);
+    int start_x = (ow - total_w) / 2;
+    int start_y = (oh - total_h) / 2 + 18;
+
+    XSetForeground(s->dpy, gc, 0xebdbb2);
+    XDrawString(s->dpy, s->power_menu, gc,
+                (ow - (int)strlen(title) * 7) / 2,
+                start_y - 34, title, (int)strlen(title));
+
+    for (int i = 0; i < 4; i++) {
+        int col = i % cols;
+        int row = i / cols;
+        int x = start_x + col * (tile + gap);
+        int y = start_y + row * (tile + gap);
+        s->power_rects[i][0] = x;
+        s->power_rects[i][1] = y;
+        s->power_rects[i][2] = tile;
+        s->power_rects[i][3] = tile;
+
+        unsigned long bg = i == 0 ? 0xcc241d : i == 1 ? 0xd79921 : i == 2 ? 0x458588 : 0x689d6a;
+        unsigned long fg = i == 1 ? 0x282828 : 0xebdbb2;
+        XSetForeground(s->dpy, gc, bg);
+        XFillRectangle(s->dpy, s->power_menu, gc, x, y,
+                       (unsigned int)tile, (unsigned int)tile);
+        XSetForeground(s->dpy, gc, fg);
+        int len = (int)strlen(labels[i]);
+        XDrawString(s->dpy, s->power_menu, gc,
+                    x + (tile - len * 7) / 2, y + tile / 2 + 5,
+                    labels[i], len);
+    }
+    XFlush(s->dpy);
+}
+
+static void show_power_menu(struct lfwm_server *s) {
+    int ox, oy, ow, oh;
+    active_output_rect(s, &ox, &oy, &ow, &oh);
+    if (!s->power_menu) {
+        XSetWindowAttributes wa = {0};
+        wa.override_redirect = True;
+        wa.event_mask = ExposureMask | ButtonPressMask | KeyPressMask;
+        s->power_menu = XCreateWindow(s->dpy, s->root, ox, oy,
+                                      (unsigned int)ow, (unsigned int)oh, 0,
+                                      CopyFromParent, InputOutput, CopyFromParent,
+                                      CWOverrideRedirect | CWEventMask, &wa);
+    }
+
+    if (s->net_wm_window_opacity) {
+        unsigned long opacity = (unsigned long)(0.82 * 0xffffffffUL);
+        XChangeProperty(s->dpy, s->power_menu, s->net_wm_window_opacity,
+                        XA_CARDINAL, 32, PropModeReplace,
+                        (unsigned char *)&opacity, 1);
+    }
+
+    XMapRaised(s->dpy, s->power_menu);
+    XRaiseWindow(s->dpy, s->power_menu);
+    XSetInputFocus(s->dpy, s->power_menu, RevertToPointerRoot, CurrentTime);
+    XGrabKeyboard(s->dpy, s->power_menu, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XGrabPointer(s->dpy, s->power_menu, True, ButtonPressMask,
+                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+    draw_power_menu(s);
+}
+
+static bool power_menu_handle_key(struct lfwm_server *s, XKeyEvent *ev) {
+    if (!s->power_menu || ev->window != s->power_menu) return false;
+    KeySym sym = XLookupKeysym(ev, 0);
+    if (sym == XK_Escape || sym == XK_q || sym == XK_m)
+        hide_power_menu(s);
+    return true;
+}
+
+static bool power_menu_handle_button(struct lfwm_server *s, XButtonEvent *ev) {
+    if (!s->power_menu || ev->window != s->power_menu) return false;
+
+    int choice = -1;
+    for (int i = 0; i < 4; i++) {
+        int *r = s->power_rects[i];
+        if (ev->x >= r[0] && ev->x < r[0] + r[2] &&
+            ev->y >= r[1] && ev->y < r[1] + r[3]) {
+            choice = i;
+            break;
+        }
+    }
+
+    hide_power_menu(s);
+    if (choice == 0) spawn_cmd("systemctl poweroff || loginctl poweroff", -1);
+    else if (choice == 1) spawn_cmd("systemctl reboot || loginctl reboot", -1);
+    else if (choice == 2) spawn_cmd("systemctl suspend || loginctl suspend", -1);
+    else if (choice == 3) s->running = false;
+    return true;
 }
 
 static void setup_root_appearance(struct lfwm_server *s) {
@@ -1486,6 +1678,7 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
         break;
     case LFW_SWAP_NEXT: swap_with_neighbor(s, true); break;
     case LFW_SWAP_PREV: swap_with_neighbor(s, false); break;
+    case LFW_POWER_MENU: show_power_menu(s); break;
     case LFW_RELOAD: reload_config(s); break;
     case LFW_QUIT: s->running = false; break;
     default: break;
@@ -2107,9 +2300,13 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         break;
     }
     case KeyPress:
+        if (power_menu_handle_key(s, &ev->xkey))
+            break;
         handle_key(s, &ev->xkey);
         break;
     case ButtonPress:
+        if (power_menu_handle_button(s, &ev->xbutton))
+            break;
         if (drag_modifier_active(s, ev->xbutton.state) &&
             (ev->xbutton.button == Button1 || ev->xbutton.button == Button3)) {
             begin_drag(s, &ev->xbutton);
@@ -2141,6 +2338,7 @@ static void handle_event(struct lfwm_server *s, XEvent *ev) {
         break;
     case Expose:
         if (ev->xexpose.window == s->bar) draw_bar(s);
+        else if (ev->xexpose.window == s->power_menu) draw_power_menu(s);
         break;
     case ConfigureNotify:
         if (ev->xconfigure.window == s->root) aw(s);
@@ -2168,6 +2366,7 @@ static void cleanup(struct lfwm_server *s) {
     if (s->dpy) {
         if (s->bar_gc) XFreeGC(s->dpy, s->bar_gc);
         if (s->bar) XDestroyWindow(s->dpy, s->bar);
+        if (s->power_menu) XDestroyWindow(s->dpy, s->power_menu);
         XUngrabKey(s->dpy, AnyKey, AnyModifier, s->root);
         XCloseDisplay(s->dpy);
     }

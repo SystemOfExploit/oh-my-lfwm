@@ -91,15 +91,14 @@ static void place_window(struct lfwm_server *s, struct lfwm_view *v, int x, int 
 static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
 
-    int ow, oh;
-    if (!gos(s, &ow, &oh)) return;
-
     int bw = v == s->workspaces[s->current_ws].focused ? s->bw_active : s->bw_inactive;
     if (v->fullscreen) {
+        int ox, oy, ow_full, oh_full;
+        active_output_rect(s, &ox, &oy, &ow_full, &oh_full);
         set_border(s, v, 0);
         set_opacity(s, v);
-        v->x = 0; v->y = 0; v->w = ow; v->h = oh;
-        place_window(s, v, 0, 0, ow, oh);
+        v->x = ox; v->y = oy; v->w = ow_full; v->h = oh_full;
+        place_window(s, v, ox, oy, ow_full, oh_full);
         XRaiseWindow(s->dpy, v->win);
         return;
     }
@@ -119,8 +118,9 @@ static void ag(struct lfwm_server *s, struct lfwm_view *v) {
     }
     set_border(s, v, bw);
     set_opacity(s, v);
-    int py = v->floating ? v->y : v->y + workarea_y(s);
-    place_window(s, v, v->x, py, v->w, v->h);
+    int px = v->floating ? v->x : v->x + s->layout_x;
+    int py = v->floating ? v->y : v->y + s->layout_y;
+    place_window(s, v, px, py, v->w, v->h);
     if (v->floating)
         XRaiseWindow(s->dpy, v->win);
 }
@@ -389,10 +389,14 @@ static void aff(struct lfwm_server *s, struct lfwm_workspace *ws) {
 
 static void aw(struct lfwm_server *s) {
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
-    int outw, outh, gi = s->gap_in, go = s->gap_out;
-    if (!gos(s, &outw, &outh)) return;
+    int area_x, area_y, outw, outh;
+    int root_w, root_h;
+    int gi = s->gap_in, go = 0;
+    if (!gos(s, &root_w, &root_h)) return;
+    workarea_rect(s, &area_x, &area_y, &outw, &outh);
+    s->layout_x = area_x;
+    s->layout_y = area_y;
 
-    outh = workarea_h(s, outh);
     if (outh < 1) outh = 1;
 
     int n = ct(ws);

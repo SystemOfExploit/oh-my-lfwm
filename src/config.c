@@ -212,6 +212,7 @@ static enum lfwm_action pa(const char *s) {
         {"resize_dec", LFW_RESIZE_DEC}, {"shrink", LFW_RESIZE_DEC},
         {"center", LFW_CENTER_FLOAT},
         {"swap_next", LFW_SWAP_NEXT}, {"swap_prev", LFW_SWAP_PREV},
+        {"power_menu", LFW_POWER_MENU}, {"powermenu", LFW_POWER_MENU},
         {"reload", LFW_RELOAD}, {"quit", LFW_QUIT}, {"exit", LFW_QUIT},
         {NULL, LFW_NONE}
     };
@@ -563,6 +564,8 @@ static bool write_default_user_config(const char *path, const char *dirpath) {
         "bind SUPER Space layout_next\n"
         "bind SUPER r reload\n"
         "bind SUPER x toggle_float\n"
+        "bind SUPER m power_menu\n"
+        "bind SUPER+SHIFT m toggle_maximize\n"
         "bind SUPER Escape quit\n"
         "\n"
         "bind SUPER 1 workspace 1\n"
@@ -686,7 +689,8 @@ static void lc(struct lfwm_server *s) {
         ba(s, def_mod | ShiftMask, XK_l, LFW_RESIZE_INC, 20, NULL);
         ba(s, def_mod | ShiftMask, XK_j, LFW_SWAP_NEXT, 0, NULL);
         ba(s, def_mod | ShiftMask, XK_k, LFW_SWAP_PREV, 0, NULL);
-        ba(s, def_mod, XK_m, LFW_TOGGLE_MAXIMIZE, 0, NULL);
+        ba(s, def_mod, XK_m, LFW_POWER_MENU, 0, NULL);
+        ba(s, def_mod | ShiftMask, XK_m, LFW_TOGGLE_MAXIMIZE, 0, NULL);
         ba(s, def_mod, XK_c, LFW_CENTER_FLOAT, 0, NULL);
         for (int i = 0; i < 10; i++) {
             KeySym k = i == 9 ? XK_0 : (KeySym)(XK_1 + i);

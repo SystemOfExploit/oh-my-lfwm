@@ -53,6 +53,7 @@ enum lfwm_action {
     LFW_SWAP_MASTER,
     LFW_PIN,
     LFW_UNPIN,
+    LFW_POWER_MENU,
     LFW_QUIT,
     LFW_RESTART,
     LFW_DEBUG,
