@@ -4,3 +4,13 @@
 
 ---
 Fastest and Userfriendly Window Manager for 90% linux distro's!
+
+Supported:
+
+Debian and other Debian based distro's
+Arch and other Arch based distro's
+RedHat/Fedora
+SUSE/OpenSUSE and other SUSE
+Void Linux
+Gentoo Linux
+
