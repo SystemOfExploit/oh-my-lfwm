@@ -44,7 +44,6 @@ struct lfwm_view {
     struct lfwm_server *server;
     struct lfwm_view *prev;
     struct lfwm_view *next;
-    bool mapped;
     bool visible;
     bool floating;
     bool fullscreen;
@@ -127,8 +126,9 @@ struct lfwm_server {
     int animation_delay_ms;
     time_t config_mtime;
     time_t last_config_check;
-    int pending_spawn_ws;
-    time_t pending_spawn_until;
+    int pending_spawn_ws[32];
+    time_t pending_spawn_until[32];
+    int pending_spawn_count;
 
     Atom wm_protocols;
     Atom wm_delete_window;
@@ -151,6 +151,7 @@ struct lfwm_server {
     Atom net_supported;
     Atom net_client_list;
     Atom net_current_desktop;
+    Atom net_wm_desktop;
     Atom net_number_of_desktops;
     Atom net_workarea;
 
@@ -266,17 +267,83 @@ static void fca(struct lfwm_server *s) {
     s->autostart_cmds = NULL; s->ac = s->acap = 0;
 }
 
-static void spawn_cmd(const char *cmd) {
+static void spawn_cmd(const char *cmd, int workspace) {
     if (!cmd || !*cmd) return;
     if (fork() == 0) {
         if (fork() == 0) {
             setsid();
+            if (workspace >= 0) {
+                char wsbuf[16];
+                snprintf(wsbuf, sizeof(wsbuf), "%d", workspace);
+                setenv("LFW_WORKSPACE", wsbuf, 1);
+            } else {
+                unsetenv("LFW_WORKSPACE");
+            }
             execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
             _exit(127);
         }
         _exit(0);
     }
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
+}
+
+static void pending_spawn_prune(struct lfwm_server *s, time_t now) {
+    int out = 0;
+    for (int i = 0; i < s->pending_spawn_count; i++) {
+        if (s->pending_spawn_until[i] >= now) {
+            s->pending_spawn_ws[out] = s->pending_spawn_ws[i];
+            s->pending_spawn_until[out] = s->pending_spawn_until[i];
+            out++;
+        }
+    }
+    s->pending_spawn_count = out;
+}
+
+static void pending_spawn_push(struct lfwm_server *s, int ws) {
+    time_t now = time(NULL);
+    pending_spawn_prune(s, now);
+    if (s->pending_spawn_count >= (int)(sizeof(s->pending_spawn_ws) / sizeof(s->pending_spawn_ws[0]))) {
+        memmove(s->pending_spawn_ws, s->pending_spawn_ws + 1,
+                (sizeof(s->pending_spawn_ws[0])) * (size_t)(s->pending_spawn_count - 1));
+        memmove(s->pending_spawn_until, s->pending_spawn_until + 1,
+                (sizeof(s->pending_spawn_until[0])) * (size_t)(s->pending_spawn_count - 1));
+        s->pending_spawn_count--;
+    }
+    s->pending_spawn_ws[s->pending_spawn_count] = ws;
+    s->pending_spawn_until[s->pending_spawn_count] = now + 30;
+    s->pending_spawn_count++;
+}
+
+static int pending_spawn_pop(struct lfwm_server *s) {
+    time_t now = time(NULL);
+    pending_spawn_prune(s, now);
+    if (s->pending_spawn_count <= 0)
+        return -1;
+
+    int ws = s->pending_spawn_ws[0];
+    memmove(s->pending_spawn_ws, s->pending_spawn_ws + 1,
+            (sizeof(s->pending_spawn_ws[0])) * (size_t)(s->pending_spawn_count - 1));
+    memmove(s->pending_spawn_until, s->pending_spawn_until + 1,
+            (sizeof(s->pending_spawn_until[0])) * (size_t)(s->pending_spawn_count - 1));
+    s->pending_spawn_count--;
+    return ws;
+}
+
+static void pending_spawn_remove_ws(struct lfwm_server *s, int ws) {
+    time_t now = time(NULL);
+    pending_spawn_prune(s, now);
+    for (int i = 0; i < s->pending_spawn_count; i++) {
+        if (s->pending_spawn_ws[i] != ws)
+            continue;
+        if (i + 1 < s->pending_spawn_count) {
+            memmove(s->pending_spawn_ws + i, s->pending_spawn_ws + i + 1,
+                    (sizeof(s->pending_spawn_ws[0])) * (size_t)(s->pending_spawn_count - i - 1));
+            memmove(s->pending_spawn_until + i, s->pending_spawn_until + i + 1,
+                    (sizeof(s->pending_spawn_until[0])) * (size_t)(s->pending_spawn_count - i - 1));
+        }
+        s->pending_spawn_count--;
+        return;
+    }
 }
 
 static void list_remove(struct lfwm_workspace *ws, struct lfwm_view *v) {
@@ -569,6 +636,21 @@ static void update_client_list(struct lfwm_server *s) {
     XChangeProperty(s->dpy, s->root, s->net_client_list, XA_WINDOW, 32,
                     PropModeReplace, (unsigned char *)wins, count);
     free(wins);
+    draw_bar(s);
+}
+
+static int workspace_index(struct lfwm_server *s, const struct lfwm_workspace *ws) {
+    for (int i = 0; i < 10; i++)
+        if (&s->workspaces[i] == ws)
+            return i;
+    return s->current_ws;
+}
+
+static void set_window_desktop(struct lfwm_server *s, struct lfwm_view *v) {
+    if (!s->net_wm_desktop || !v) return;
+    long desktop = workspace_index(s, v->ws);
+    XChangeProperty(s->dpy, v->win, s->net_wm_desktop, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&desktop, 1);
 }
 
 static int workspace_count(struct lfwm_workspace *ws, bool tiled_only) {
@@ -841,6 +923,23 @@ static void hide_workspace(struct lfwm_server *s, int idx) {
     }
 }
 
+static void sync_workspace_visibility(struct lfwm_server *s) {
+    for (int i = 0; i < 10; i++) {
+        struct lfwm_workspace *ws = &s->workspaces[i];
+        bool should_show = i == s->current_ws;
+        for (struct lfwm_view *v = ws->head; v; v = v->next) {
+            if (should_show && !v->visible) {
+                XMapWindow(s->dpy, v->win);
+                v->visible = true;
+            } else if (!should_show && v->visible) {
+                v->ignore_unmap++;
+                XUnmapWindow(s->dpy, v->win);
+                v->visible = false;
+            }
+        }
+    }
+}
+
 static void fv(struct lfwm_server *s, struct lfwm_view *v) {
     if (!v) return;
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
@@ -910,7 +1009,7 @@ static void wss(struct lfwm_server *s, int ws) {
     XChangeProperty(s->dpy, s->root, s->net_current_desktop, XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char *)&cur, 1);
     show_workspace(s, ws);
-    draw_bar(s);
+    sync_workspace_visibility(s);
     aw(s);
     if (s->workspaces[ws].focused) fv(s, s->workspaces[ws].focused);
     else if (s->workspaces[ws].tail) fv(s, s->workspaces[ws].tail);
@@ -928,22 +1027,24 @@ static void wmv(struct lfwm_server *s, struct lfwm_view *v, int ws, bool st) {
     list_insert_tail(new_ws, v);
     if (!v->floating && !v->fullscreen)
         bsp_insert(new_ws, new_ws->focused, v, true, false);
+    set_window_desktop(s, v);
     if (st) {
         wss(s, ws);
-    } else if (was_current) {
-        if (v->visible) {
-            v->ignore_unmap++;
-            XUnmapWindow(s->dpy, v->win);
-            v->visible = false;
-        }
-        aw(s);
-    } else if (new_ws == &s->workspaces[s->current_ws]) {
-        if (!v->visible) {
-            XMapWindow(s->dpy, v->win);
-            v->visible = true;
-        }
-        aw(s);
+        update_client_list(s);
+        return;
     }
+
+    sync_workspace_visibility(s);
+    if (new_ws == &s->workspaces[s->current_ws]) {
+        fv(s, v);
+    } else if (was_current && s->workspaces[s->current_ws].tail) {
+        fv(s, s->workspaces[s->current_ws].tail);
+    } else {
+        aw(s);
+        if (was_current)
+            XSetInputFocus(s->dpy, s->root, RevertToPointerRoot, CurrentTime);
+    }
+    update_client_list(s);
 }
 
 static void tm(struct lfwm_server *s, struct lfwm_view *v) {
@@ -1057,6 +1158,7 @@ static void reload_config(struct lfwm_server *s) {
     for (int i = 0; i < 10; i++)
         for (struct lfwm_view *v = s->workspaces[i].head; v; v = v->next)
             grab_buttons_for_window(s, v->win);
+    sync_workspace_visibility(s);
     aw(s);
 }
 
@@ -1066,9 +1168,8 @@ static void ha(struct lfwm_server *s, const struct lfwm_binding *b) {
     switch (b->action) {
     case LFW_SPAWN:
         if (b->spawn_cmd) {
-            s->pending_spawn_ws = s->current_ws;
-            s->pending_spawn_until = time(NULL) + 8;
-            spawn_cmd(b->spawn_cmd);
+            pending_spawn_push(s, s->current_ws);
+            spawn_cmd(b->spawn_cmd, s->current_ws);
         }
         break;
     case LFW_CLOSE: close_focused(s); break;
@@ -1178,6 +1279,51 @@ static bool get_wm_state_fullscreen(struct lfwm_server *s, Window win) {
     return found;
 }
 
+static int get_spawn_workspace_hint(struct lfwm_server *s, Window win) {
+    if (!s->net_wm_pid) return -1;
+
+    Atom actual;
+    int format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    int ws = -1;
+
+    if (XGetWindowProperty(s->dpy, win, s->net_wm_pid, 0, 1, False, XA_CARDINAL,
+                           &actual, &format, &nitems, &bytes_after, &data) != Success ||
+        !data || actual != XA_CARDINAL || format != 32 || nitems < 1) {
+        if (data) XFree(data);
+        return -1;
+    }
+
+    unsigned long pid = ((unsigned long *)data)[0];
+    XFree(data);
+    if (!pid) return -1;
+
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%lu/environ", pid);
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    char buf[8192];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+
+    const char key[] = "LFW_WORKSPACE=";
+    size_t key_len = sizeof(key) - 1;
+    for (size_t i = 0; i < n;) {
+        size_t len = strnlen(buf + i, n - i);
+        if (len >= key_len && memcmp(buf + i, key, key_len) == 0) {
+            ws = atoi(buf + i + key_len);
+            if (ws < 0 || ws >= 10) ws = -1;
+            break;
+        }
+        i += len + 1;
+    }
+
+    return ws;
+}
+
 static void manage_window(struct lfwm_server *s, Window win) {
     if (find_view(s, win)) return;
 
@@ -1189,22 +1335,18 @@ static void manage_window(struct lfwm_server *s, Window win) {
     bool was_viewable = wa.map_state == IsViewable;
 
     struct lfwm_workspace *ws = &s->workspaces[s->current_ws];
-    time_t now = time(NULL);
-    if (s->pending_spawn_ws >= 0 && s->pending_spawn_ws < 10 &&
-        s->pending_spawn_until >= now) {
-        ws = &s->workspaces[s->pending_spawn_ws];
-        s->pending_spawn_ws = -1;
-        s->pending_spawn_until = 0;
-    } else if (s->pending_spawn_ws >= 0 && s->pending_spawn_until < now) {
-        s->pending_spawn_ws = -1;
-        s->pending_spawn_until = 0;
-    }
+    int spawn_ws = get_spawn_workspace_hint(s, win);
+    if (spawn_ws >= 0)
+        pending_spawn_remove_ws(s, spawn_ws);
+    else
+        spawn_ws = pending_spawn_pop(s);
+    if (spawn_ws >= 0 && spawn_ws < 10)
+        ws = &s->workspaces[spawn_ws];
     struct lfwm_view *v = calloc(1, sizeof(*v));
     if (!v) abort();
     v->server = s;
     v->win = win;
     v->ws = ws;
-    v->mapped = true;
     v->visible = was_viewable;
     v->x = wa.x; v->y = wa.y;
     v->w = wa.width > 1 ? wa.width : 800;
@@ -1232,6 +1374,7 @@ static void manage_window(struct lfwm_server *s, Window win) {
 
     apply_rule(s, v);
     ws = v->ws;
+    set_window_desktop(s, v);
     if (v->floating && !v->fullscreen)
         center_floating_view(s, v, parent && parent->ws == ws ? parent : NULL);
 
@@ -1281,6 +1424,7 @@ static void manage_window(struct lfwm_server *s, Window win) {
         XUnmapWindow(s->dpy, win);
         v->visible = false;
     }
+    sync_workspace_visibility(s);
     update_client_list(s);
 }
 
@@ -1506,6 +1650,15 @@ static void handle_client_message(struct lfwm_server *s, XClientMessageEvent *ev
     } else if (ev->message_type == s->net_active_window) {
         struct lfwm_view *v = find_view(s, ev->window);
         if (v && v->ws == &s->workspaces[s->current_ws]) fv(s, v);
+    } else if (ev->message_type == s->net_current_desktop) {
+        long ws = ev->data.l[0];
+        if (ws >= 0 && ws < 10)
+            wss(s, (int)ws);
+    } else if (ev->message_type == s->net_wm_desktop) {
+        struct lfwm_view *v = find_view(s, ev->window);
+        long ws = ev->data.l[0];
+        if (v && ws >= 0 && ws < 10)
+            wmv(s, v, (int)ws, false);
     }
 }
 
@@ -1553,6 +1706,7 @@ static void init_atoms(struct lfwm_server *s) {
     s->net_supported = XInternAtom(s->dpy, "_NET_SUPPORTED", False);
     s->net_client_list = XInternAtom(s->dpy, "_NET_CLIENT_LIST", False);
     s->net_current_desktop = XInternAtom(s->dpy, "_NET_CURRENT_DESKTOP", False);
+    s->net_wm_desktop = XInternAtom(s->dpy, "_NET_WM_DESKTOP", False);
     s->net_number_of_desktops = XInternAtom(s->dpy, "_NET_NUMBER_OF_DESKTOPS", False);
     s->net_workarea = XInternAtom(s->dpy, "_NET_WORKAREA", False);
     s->net_wm_window_type = XInternAtom(s->dpy, "_NET_WM_WINDOW_TYPE", False);
@@ -1572,6 +1726,7 @@ static void init_atoms(struct lfwm_server *s) {
         s->net_wm_window_type,
         s->net_client_list,
         s->net_current_desktop,
+        s->net_wm_desktop,
         s->net_number_of_desktops,
         s->net_workarea,
     };
@@ -1596,8 +1751,7 @@ static void init_server(struct lfwm_server *s) {
     s->root = RootWindow(s->dpy, s->screen);
     s->running = true;
     s->current_ws = 0;
-    s->pending_spawn_ws = -1;
-    s->pending_spawn_until = 0;
+    s->pending_spawn_count = 0;
 
     for (int i = 0; i < 10; i++) {
         s->workspaces[i].head = NULL;
@@ -1649,7 +1803,8 @@ static void init_server(struct lfwm_server *s) {
     setup_bar(s);
     grab_keys(s);
     scan_existing_windows(s);
-    for (int i = 0; i < s->ac; i++) spawn_cmd(s->autostart_cmds[i]);
+    sync_workspace_visibility(s);
+    for (int i = 0; i < s->ac; i++) spawn_cmd(s->autostart_cmds[i], -1);
     fprintf(stderr, "lfwm: started on DISPLAY=%s\n", DisplayString(s->dpy));
 }
 
