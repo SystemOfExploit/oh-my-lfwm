@@ -279,8 +279,6 @@ static void each_tiled(struct lfwm_workspace *ws, void (*fn)(struct lfwm_view *,
     }
 }
 
-static void show_split_seam(struct lfwm_server *s, int x, int y, int w, int h, bool vertical);
-
 struct tile_ctx {
     struct lfwm_server *s;
     struct lfwm_workspace *ws;
@@ -303,13 +301,10 @@ static void apply_master_item(struct lfwm_view *v, int idx, void *data) {
         if (idx < mc) {
             int th = mc > 1 ? (mh - c->gi * (mc - 1)) / mc : mh;
             v->x = c->go; v->w = uw; v->y = my + idx * (th + c->gi); v->h = th;
-            if (idx > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
         } else {
             int si = idx - mc;
             int th = sc > 1 ? (sh - c->gi * (sc - 1)) / sc : sh;
             v->x = c->go; v->w = uw; v->y = sy + si * (th + c->gi); v->h = th;
-            if (idx == mc) show_split_seam(c->s, c->go, sy - c->gi, uw, c->gi, false);
-            else if (si > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
         }
     } else {
         int mw = (int)(uw * c->ws->master_ratio);
@@ -319,13 +314,10 @@ static void apply_master_item(struct lfwm_view *v, int idx, void *data) {
         if (idx < mc) {
             int th = mc > 1 ? (uh - c->gi * (mc - 1)) / mc : uh;
             v->x = mx; v->w = mw; v->y = c->go + idx * (th + c->gi); v->h = th;
-            if (idx > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
         } else {
             int si = idx - mc;
             int th = sc > 1 ? (uh - c->gi * (sc - 1)) / sc : uh;
             v->x = sx; v->w = sw; v->y = c->go + si * (th + c->gi); v->h = th;
-            if (idx == mc) show_split_seam(c->s, sx - c->gi, c->go, c->gi, uh, true);
-            else if (si > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
         }
     }
     ag(c->s, v);
@@ -350,8 +342,6 @@ static void apply_grid_item(struct lfwm_view *v, int idx, void *data) {
     v->x = c->go + col * (cw + c->gi);
     v->y = c->go + row * (rh + c->gi);
     v->w = cw; v->h = rh;
-    if (col > 0) show_split_seam(c->s, v->x - c->gi, v->y, c->gi, v->h, true);
-    if (row > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
     ag(c->s, v);
 }
 
@@ -382,7 +372,6 @@ static void apply_horiz_item(struct lfwm_view *v, int idx, void *data) {
     int rh = (uh - c->gi * (c->n - 1)) / c->n;
     v->x = c->go; v->y = c->go + idx * (rh + c->gi);
     v->w = c->aw - c->go * 2; v->h = rh;
-    if (idx > 0) show_split_seam(c->s, v->x, v->y - c->gi, v->w, c->gi, false);
     ag(c->s, v);
 }
 
@@ -398,7 +387,6 @@ static void apply_vert_item(struct lfwm_view *v, int idx, void *data) {
     int cw = (uw - c->gi * (c->n - 1)) / c->n;
     v->x = c->go + idx * (cw + c->gi); v->y = c->go;
     v->w = cw; v->h = c->ah - c->go * 2;
-    if (idx > 0) show_split_seam(c->s, v->x - c->gi, v->y, c->gi, v->h, true);
     ag(c->s, v);
 }
 
@@ -408,53 +396,6 @@ static void avt(struct lfwm_server *s, struct lfwm_workspace *ws,
     each_tiled(ws, apply_vert_item, &c);
 }
 
-static void begin_seams(struct lfwm_server *s) {
-    s->seam_count = 0;
-}
-
-static void show_seam(struct lfwm_server *s, int x, int y, int w, int h) {
-    if (w <= 0 || h <= 0 || s->seam_count >= LFW_MAX_SEAMS)
-        return;
-
-    int idx = s->seam_count++;
-    if (!s->seam_windows[idx]) {
-        XSetWindowAttributes wa = {0};
-        wa.override_redirect = True;
-        wa.background_pixel = s->ba ? s->ba : s->bi;
-        s->seam_windows[idx] = XCreateWindow(s->dpy, s->root, x, y,
-                                             (unsigned int)w, (unsigned int)h, 0,
-                                             CopyFromParent, InputOutput, CopyFromParent,
-                                             CWOverrideRedirect | CWBackPixel, &wa);
-    }
-    XSetWindowBackground(s->dpy, s->seam_windows[idx], s->ba ? s->ba : s->bi);
-    XMoveResizeWindow(s->dpy, s->seam_windows[idx], x, y,
-                      (unsigned int)w, (unsigned int)h);
-    XClearWindow(s->dpy, s->seam_windows[idx]);
-    XMapRaised(s->dpy, s->seam_windows[idx]);
-}
-
-static void show_split_seam(struct lfwm_server *s, int x, int y, int w, int h, bool vertical) {
-    int thickness = s->bw_active > s->bw_inactive ? s->bw_active : s->bw_inactive;
-    if (thickness < 1) thickness = 1;
-    if (vertical) {
-        if (thickness > w) thickness = w;
-        show_seam(s, s->layout_x + x + (w - thickness) / 2,
-                  s->layout_y + y, thickness, h);
-    } else {
-        if (thickness > h) thickness = h;
-        show_seam(s, s->layout_x + x,
-                  s->layout_y + y + (h - thickness) / 2, w, thickness);
-    }
-}
-
-static void finish_seams(struct lfwm_server *s) {
-    for (int i = s->seam_count; i < LFW_MAX_SEAMS; i++)
-        if (s->seam_windows[i])
-            XUnmapWindow(s->dpy, s->seam_windows[i]);
-    for (int i = 0; i < s->seam_count; i++)
-        if (s->seam_windows[i])
-            XRaiseWindow(s->dpy, s->seam_windows[i]);
-}
 static bool subtree_has_tiled(struct lfwm_node *n) {
     if (!n) return false;
     if (n->view) return !n->view->floating && !n->view->fullscreen;
@@ -481,13 +422,11 @@ static void layout_bsp_node(struct lfwm_server *s, struct lfwm_node *n,
     if (n->vertical) {
         int fw = (w - gi) / 2;
         int sw = w - gi - fw;
-        show_split_seam(s, x + fw, y, gi, h, true);
         layout_bsp_node(s, n->first, x, y, fw, h, gi);
         layout_bsp_node(s, n->second, x + fw + gi, y, sw, h, gi);
     } else {
         int fh = (h - gi) / 2;
         int sh = h - gi - fh;
-        show_split_seam(s, x, y + fh, w, gi, false);
         layout_bsp_node(s, n->first, x, y, w, fh, gi);
         layout_bsp_node(s, n->second, x, y + fh + gi, w, sh, gi);
     }
@@ -521,14 +460,13 @@ static void aw(struct lfwm_server *s) {
 
     if (outh < 1) outh = 1;
 
-    begin_seams(s);
     int n = ct(ws);
     if (n <= 1 && s->sg) {
         gi = 0;
     } else {
-        int seam_gap = s->bw_active + s->bw_inactive + 1;
-        if (gi < seam_gap)
-            gi = seam_gap;
+        int min_gap = s->bw_active + s->bw_inactive + 1;
+        if (gi < min_gap)
+            gi = min_gap;
     }
     if (n > 0) {
         switch (ws->layout) {
@@ -543,7 +481,6 @@ static void aw(struct lfwm_server *s) {
     }
     aff(s, ws);
     restack_workspace(s, ws);
-    finish_seams(s);
     draw_bar(s);
-    XFlush(s->dpy);
+    XSync(s->dpy, False);
 }
